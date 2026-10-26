@@ -22,6 +22,8 @@
 //! `--right-click-at X,Y` opens a screen-space context menu after the script, including panel
 //! and document-tab menus that are outside the document-coordinate control pointer.
 //! `--click-at X,Y` opens a screen-space menu (for example the top Select menu) after the script.
+//! `--settle-before-click-ms N` renders for N ms after the script before clicking, allowing
+//! asynchronous previews to finish laying out. `--settle-ms` still waits after the click.
 
 use photocraft_ui_egui::control::{ControlRequest, Outcome, handle};
 use photocraft_ui_egui::{PhotocraftApp, Services};
@@ -157,6 +159,11 @@ fn main() {
         if timing {
             eprintln!("{:>8.1} ms  {label}", t0.elapsed().as_secs_f64() * 1000.0);
         }
+    }
+    let pre_click_ms: u64 = arg(&args, "--settle-before-click-ms").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let pre_click_start = std::time::Instant::now();
+    while pre_click_start.elapsed() < std::time::Duration::from_millis(pre_click_ms) {
+        harness.step();
     }
     for (flag, button) in [("--click-at", egui::PointerButton::Primary), ("--right-click-at", egui::PointerButton::Secondary)] {
         let Some((x, y)) = arg(&args, flag).and_then(|s| s.split_once(',').and_then(|(x, y)| Some((x.parse::<f32>().ok()?, y.parse::<f32>().ok()?)))) else {

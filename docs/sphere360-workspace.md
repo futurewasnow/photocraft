@@ -72,8 +72,22 @@ transparency; malformed geometry; atomic view commands, menu-cache invalidation 
 stale-preview rejection; native 8/16/32-bit shifts; cancellation; masks; position
 locks; band boundaries; undo/redo and native-document save/reopen.
 UI snapshots use an original procedural panorama, not personal photography.
-Compilation, tests and visual inspection must complete before this development
-feature is treated as a verified app workflow.
+On 2026-10-26, all nine focused 360 tests passed. The broader library runs
+reported 2,178 engine and 3,803 UI passes, with 14 and 18 intentionally ignored
+tests respectively. Five engine printing tests and four UI printer-dialog tests
+stalled on the Windows printer service and were explicitly excluded from the
+successful runs. Formatting, all-target clippy with warnings denied, and layering
+passed (31 crates, zero violations).
+Offscreen 1440 × 900 snapshots of the seam, nadir and zenith were inspected using
+the procedural panorama. The wrap was continuous, poles had no visible holes,
+and the locked-background explanation and unlocked controls were visible. These
+captures used the Microsoft Basic Render Driver (DX12 software adapter), not a
+hardware-performance or physical-headset test. A settled pointer click on
+**Set heading as front**, with background jobs enabled, shifted the panorama and
+reset yaw from 90 to 0 while retaining the same visible direction. The screenshot
+harness now supports `--settle-before-click-ms` for asynchronous preview layout.
+Remaining integration, wasm, parity, panic-hunt and performance gates must finish
+before release.
 
 Run `cargo run --release -p photocraft-engine --example sphere360_bench` for a
 33.6-megapixel, 16-bit procedural comparison against the former full-buffer yaw.

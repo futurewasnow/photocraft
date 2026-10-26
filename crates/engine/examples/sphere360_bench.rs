@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for y0 in (0..h).step_by(64) {
             let rows = 64.min(h - y0);
             let mut data = vec![0.; w as usize * rows as usize * 4];
-            for (i, px) in data.chunks_exact_mut(4).enumerate() {
+            for (i, px) in data.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let x = i as u32 % w;
                 let y = y0 + i as u32 / w;
                 px.copy_from_slice(&[x as f32 / w as f32, y as f32 / h as f32, ((x * 13 + y * 17) % 4093) as f32 / 4093., 1.]);
