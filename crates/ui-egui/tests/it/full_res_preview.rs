@@ -5,6 +5,8 @@
 //! this size) is all black, so its preview shows a flat colour where the full-size one shows the
 //! columns at 100 % (and their mipmapped grey zoomed out). Drives the real app offscreen on wgpu;
 //! skips when no GPU adapter exists (like `drag_preview_canvas.rs`).
+//! Set `PHOTOCRAFT_TEST_HARDWARE_GPU=1` to compare with a physical adapter. That explicit mode
+//! fails instead of silently skipping or accepting a software adapter; default coverage is unchanged.
 
 use photocraft_color::{Color, ColorMode, SampleType};
 use photocraft_doc::{Document, Size};
@@ -18,9 +20,15 @@ type Harness = egui_kittest::Harness<'static, PhotocraftApp>;
 const W: i32 = 3000;
 const H: i32 = 2000;
 
+fn hardware_gpu() -> bool {
+    std::env::var_os("PHOTOCRAFT_TEST_HARDWARE_GPU").is_some_and(|v| v == "1")
+}
+
 fn harness() -> Option<Harness> {
     let built = std::panic::catch_unwind(|| {
-        egui_kittest::Harness::builder().with_size(egui::vec2(1100.0, 760.0)).with_pixels_per_point(1.0).with_max_steps(64).wgpu().build_eframe(|cc| {
+        let builder = egui_kittest::Harness::builder().with_size(egui::vec2(1100.0, 760.0)).with_pixels_per_point(1.0).with_max_steps(64);
+        let builder = if hardware_gpu() { builder.wgpu_setup(eframe::egui_wgpu::WgpuSetup::without_display_handle()) } else { builder.wgpu() };
+        builder.build_eframe(|cc| {
             PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
             let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
             if let Some(rs) = cc.wgpu_render_state.as_ref() {
@@ -31,6 +39,7 @@ fn harness() -> Option<Harness> {
     });
     match built {
         Ok(h) => Some(h),
+        Err(error) if hardware_gpu() => std::panic::resume_unwind(error),
         Err(_) => {
             eprintln!("skipping: no GPU adapter");
             None
@@ -69,6 +78,10 @@ fn setup(h: &mut Harness, zoom: f32) {
 fn on_gpu(h: &mut Harness) -> bool {
     let _ = h.render();
     let gpu = h.state().perf.gpu;
+    eprintln!("full-resolution preview adapter: {}", serde_json::to_string(&h.state().perf.gpu_info).unwrap());
+    if hardware_gpu() {
+        assert!(gpu && matches!(h.state().perf.gpu_info.device_type.as_str(), "discreteGpu" | "integratedGpu"), "a physical GPU canvas was requested");
+    }
     if !gpu {
         eprintln!("skipping: the canvas isn't on the GPU");
     }
@@ -183,7 +196,14 @@ fn adjustment_dialog_zoomed_out_skips_the_reduced_copy_when_low_res_is_off() {
     assert!(committed > 60.0, "zoomed out the columns average to grey ({committed})");
     photocraft_ui_egui::adjust_dialog::open(h.state_mut(), "image.adjustments.levels").expect("Levels dialog");
     h.run_steps(4);
-    assert!(photocraft_ui_egui::adjust_preview::gpu_proxy(h.state_mut(), 0, 0.5).is_some(), "default: zoomed out on the reduced copy");
+    let has_proxy = photocraft_ui_egui::adjust_preview::gpu_proxy(h.state_mut(), 0, 0.5).is_some();
+    let on_layer = photocraft_ui_egui::adjust_preview::on_layer(h.state_mut(), 0);
+    assert!(
+        has_proxy,
+        "default: zoomed out on the reduced copy; on_layer={on_layer}, reduced={}, gpu={}",
+        h.state().session.prefs().performance.low_resolution_previews,
+        serde_json::to_string(&h.state().perf.gpu_info).unwrap()
+    );
     let reduced = mean(&row(&mut h));
     assert!(reduced < 30.0, "the reduced copy keeps only the black columns ({reduced})");
     low_res(&mut h, false);

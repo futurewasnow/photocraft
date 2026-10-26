@@ -77,7 +77,17 @@ reported 2,178 engine and 3,803 UI passes, with 14 and 18 intentionally ignored
 tests respectively. Five engine printing tests and four UI printer-dialog tests
 stalled on the Windows printer service and were explicitly excluded from the
 successful runs. Formatting, all-target clippy with warnings denied, and layering
-passed (31 crates, zero violations).
+passed (31 crates, zero violations). WebAssembly checks passed for 24 crates and
+the optional HEIF codec feature. The menu-parity generator ran under the test
+profile to reuse compiled UI artifacts: 631/631 menu entries, checklist unchanged.
+Engine integration targets passed 289 tests with six ignored. UI integration
+reported 126 passes, two failures, one ignored and four printer-paper tests
+excluded. Both failures reproduced serially on the default DX12 software adapter;
+diagnostics identified a lost device and a `WrongSubmissionIndex` readback error.
+All three related full-resolution preview tests passed on the GTX 1070/Vulkan
+with `PHOTOCRAFT_TEST_HARDWARE_GPU=1`. This opt-in test setting fails if no physical
+GPU canvas is available. It does not change the default tests or erase the
+software-renderer failures.
 Offscreen 1440 × 900 snapshots of the seam, nadir and zenith were inspected using
 the procedural panorama. The wrap was continuous, poles had no visible holes,
 and the locked-background explanation and unlocked controls were visible. These
@@ -86,8 +96,11 @@ hardware-performance or physical-headset test. A settled pointer click on
 **Set heading as front**, with background jobs enabled, shifted the panorama and
 reset yaw from 90 to 0 while retaining the same visible direction. The screenshot
 harness now supports `--settle-before-click-ms` for asynchronous preview layout.
-Remaining integration, wasm, parity, panic-hunt and performance gates must finish
-before release.
+The full command panic-hunt failed on two Windows printer-service timeouts:
+`file.printers` and `file.printOneCopy` each exceeded four seconds twice, even in
+dry-run mode. No other command was reported as failing. This is a failed gate,
+not a pass with exclusions. Printer-service and software-renderer gates remain
+unresolved; the development fork is not a release candidate.
 
 Run `cargo run --release -p photocraft-engine --example sphere360_bench` for a
 33.6-megapixel, 16-bit procedural comparison against the former full-buffer yaw.
@@ -96,3 +109,11 @@ of the native interleaved bytes. Temporary sample storage is 512 MiB for that
 reference and at most 8 MiB for the banded command, excluding document tiles,
 history and allocator overhead. Timings must be measured, not inferred from this
 memory reduction.
+
+Measured on 2026-10-26 on the i7-6820HK, with other builds/tests stopped, all three
+33.6 MP RGBA16 runs matched the reference's native-byte hash. Median command time
+was 0.8947 seconds for the banded command versus 0.9378 seconds for the full-buffer
+reference. Individual pairs (reference → banded seconds) were 0.9144 → 0.8845,
+0.9378 → 0.8947 and 0.9694 → 0.9111. The temporary sample buffer is 64 times smaller;
+this is not a measurement of total process memory. The small timing difference
+from three runs on one workstation is not a general speed guarantee.
