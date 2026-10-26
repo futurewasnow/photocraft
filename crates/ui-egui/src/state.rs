@@ -1508,6 +1508,8 @@ pub struct UiState {
     #[serde(default)]
     pub analysis: crate::analysis_ui::AnalysisUi,
     pub timeline: crate::timeline_ui::TimelineUi,
+    #[serde(default)]
+    pub sphere360: crate::sphere360_ui::State,
     /// Slice and Slice Select tools (see `slice_ui`).
     #[serde(default)]
     pub slices: crate::slice_ui::SliceUi,
@@ -1661,6 +1663,7 @@ impl Default for UiState {
             type_panels: Default::default(),
             analysis: Default::default(),
             timeline: Default::default(),
+            sphere360: Default::default(),
             slices: Default::default(),
             frame_tool: Default::default(),
             artboard_tool: Default::default(),

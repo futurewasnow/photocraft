@@ -1399,6 +1399,7 @@ pub fn inspect(app: &PhotocraftApp, ctx: &egui::Context) -> Value {
         "dockingHidden": app.ui.docking_hidden,
         "dockingCollapsed": app.ui.docking_collapsed,
         "view": app.ui.view,
+        "sphere360": app.ui.sphere360,
         "views": app.ui.views,
         "dialogs": dialogs,
         "windows": app.ui.windows,

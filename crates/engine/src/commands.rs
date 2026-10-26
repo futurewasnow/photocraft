@@ -1492,6 +1492,7 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::contour_lib_cmds::specs());
     v.extend(crate::layer_list_cmds::specs());
     v.extend(crate::filters::specs());
+    v.extend(crate::sphere360_cmds::specs());
     v.extend(crate::filters_ext::specs());
     v.extend(crate::color_to_alpha_cmds::specs());
     v.extend(crate::gallery_cmds::specs());

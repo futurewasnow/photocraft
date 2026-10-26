@@ -143,6 +143,10 @@ pub(crate) fn invoke_unguarded(app: &mut PhotocraftApp, ctx: &egui::Context, id:
     if let Some(r) = crate::variables_ui::menu(app, id, &params) {
         return r;
     }
+    // View > 360 Workspace (view state only; pixel edits use the engine).
+    if let Some(r) = crate::sphere360_ui::menu(app, id, &params) {
+        return r;
+    }
     // Window > Timeline panel.
     if let Some(r) = crate::timeline_ui::menu(app, id, &params) {
         return r;
@@ -715,7 +719,7 @@ pub fn is_enabled(app: &PhotocraftApp, id: &str) -> bool {
     if crate::analysis_ui::handles(id) {
         return true;
     }
-    if crate::preset_panels::handles(id) || crate::type_panels_ui::handles(id) || crate::timeline_ui::handles(id) {
+    if crate::preset_panels::handles(id) || crate::type_panels_ui::handles(id) || crate::timeline_ui::handles(id) || crate::sphere360_ui::handles(id) {
         return true;
     }
     if let Some(e) = crate::view_cmds::is_enabled(app, id) {
@@ -791,6 +795,9 @@ const MODE_CHECKS: [&str; 11] = ["rgb", "grayscale", "cmyk", "lab", "multichanne
 
 /// Is a UI-level panel toggle currently on (for checkmarks)?
 fn checked(app: &PhotocraftApp, id: &str) -> Option<bool> {
+    if id == "view.sphere360" {
+        return Some(app.ui.sphere360.open);
+    }
     if let Some(checked) = crate::panel_docking::checked(app, id) {
         return Some(checked);
     }

@@ -1,0 +1,84 @@
+# 360 workspace (development fork)
+
+Open a **monoscopic 360 × 180-degree equirectangular panorama**, then choose
+**View → 360° Workspace**. The panel requires a 2:1 canvas; invoking it explicitly
+selects that interpretation. Dimensions alone do not detect projection or stereo.
+Packed stereo and VR180 images need separate modes and are not supported here.
+
+Drag the preview to look around, or use the yaw, pitch and field-of-view sliders.
+Front, Seam, Nadir and Zenith frame the corresponding directions. These controls
+change only the view, leaving the document and its undo history untouched.
+After a heading edit starts in the background, the view resets only when it
+succeeds, provided the document and horizontal viewing angle are unchanged. Cancellation
+or failure leaves the view unchanged.
+
+The display preview uses a colour-managed composite of the committed document,
+reduced to at most 2048 pixels wide. It is not a full-resolution detail inspection
+or export. Native builds compute one thumbnail in a background worker at a time;
+Snapshot/revision/display keys discard stale results after edits, switching tabs,
+or reopening a native project that retains the same saved document ID.
+View changes reuse that composite. The WebAssembly path computes a bounded preview
+synchronously on a cache miss. In-progress adjustment/stroke previews are not included
+until the edit is committed.
+
+## Lossless heading edits
+
+**Set heading as front** moves the selected yaw to the centre by shifting whole
+columns to the nearest source pixel. It applies yaw only, not the preview pitch or
+field of view. **Move seam 180°** swaps the two panorama halves, placing the previous
+left/right boundary at the centre for inspection or repair. Both operations affect
+only the active raster layer within the panorama canvas and make one undoable,
+journaled engine edit. Stored pixels outside the canvas remain unchanged.
+
+Native channel values and bit depth are retained without colour conversion or
+interpolation. Masks, selected regions, alpha-channel targeting and locked pixels
+are rejected instead of silently applying a partial spherical edit. Apply/remove
+attached masks deliberately before using this initial layer-only operation.
+For a locked Background layer, use **Layer → New → Layer from Background** first,
+then remove any remaining position or transparency locks deliberately.
+The native app uses its existing cancellable background-job mechanism. The engine
+shifts in row bands with at most 8 MiB of temporary samples, checking cancellation
+between reads and writes and reporting progress. The document's copy-on-write
+tiles and undo history use additional memory. Other layers remain in place.
+
+Ordinary painting, healing and planar filters do not become sphere-aware merely
+because this panel is open. Wrap-aware editing tools, project projection metadata,
+pole repair, stereo/VR180 and spherical export metadata remain separate work.
+
+## Automation
+
+The existing control protocol can invoke the same shell commands:
+
+```json
+["ui.menu.invoke", {"id":"view.sphere360"}]
+["ui.menu.invoke", {"id":"view.sphere360.look", "params":{"yaw":180,"pitch":0,"fov":80}}]
+["engine.execute", {"command":"sphere360.yaw", "params":{"columns":1024}}]
+```
+
+`view.sphere360` toggles the panel. `view.sphere360.look` opens it and atomically
+patches any of `yaw` (-180..180), `pitch` (-90..90) and `fov` (30..120), in degrees.
+Unknown fields and invalid numbers fail without partially changing the view.
+Serialized UI state includes `sphere360`; older state gets the default closed view.
+`ui.inspect` reports the current view under `sphere360` without changing it.
+
+`sphere360.yaw` accepts only an integer `columns`. Positive values move pixels right;
+negative values move them left. Large integers wrap modulo the canvas width. Use
+`edit.undo` / `edit.redo` through the normal command path.
+
+## Verification scope
+
+Tests cover directional sampling at the front, seam and poles; premultiplied
+transparency; malformed geometry; atomic view commands, menu-cache invalidation and state round-trip;
+stale-preview rejection; native 8/16/32-bit shifts; cancellation; masks; position
+locks; band boundaries; undo/redo and native-document save/reopen.
+UI snapshots use an original procedural panorama, not personal photography.
+Compilation, tests and visual inspection must complete before this development
+feature is treated as a verified app workflow.
+
+Run `cargo run --release -p photocraft-engine --example sphere360_bench` for a
+33.6-megapixel, 16-bit procedural comparison against the former full-buffer yaw.
+It reports three pairs of timings and verifies every output pixel using a hash
+of the native interleaved bytes. Temporary sample storage is 512 MiB for that
+reference and at most 8 MiB for the banded command, excluding document tiles,
+history and allocator overhead. Timings must be measured, not inferred from this
+memory reduction.
