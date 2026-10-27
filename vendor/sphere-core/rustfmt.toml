@@ -1,0 +1,3 @@
+# Keep the canonical core formatting independent of the editor workspace.
+max_width = 100
+edition = "2024"

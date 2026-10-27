@@ -8,6 +8,14 @@ next to them.
 
 ## Bundled in the app
 
+The first-party `vendor/sphere-core` snapshot contains spherical processing code by
+Sphere360 contributors (MIT OR Apache-2.0), from the Sphere360 suite's
+`crates/sphere-core`. Its license files and research provenance remain beside it.
+`vendor/sphere-core/SOURCE.json` pins every source/test file by SHA-256 of UTF-8
+text with LF line endings, so checkout newline settings do not change it. Update with
+the suite's `tools/sync-photocraft-core.ps1`, then check with `-Check`; do not edit
+the snapshot independently. The fork builds without access to the suite repository.
+
 | Path | Title | Author | Source | License |
 |---|---|---|---|---|
 | `crates/codecs/src/codecs/xpm/x11_colors.rs` | X11 `rgb.txt` color-name lookup table (normalized X.Org RGB values) | X.Org Foundation and X11 contributors | <https://cgit.freedesktop.org/xorg/app/rgb/tree/rgb.txt> | MIT (X.Org app/rgb) |

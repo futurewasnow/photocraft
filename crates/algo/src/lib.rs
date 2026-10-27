@@ -19,6 +19,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod artistic;
+/// Shared spherical kernels, pinned by the vendored SOURCE.json manifest.
+pub use sphere_core as sphere360;
 mod artistic_fx;
 mod blur;
 mod blur2;

@@ -15,10 +15,11 @@ pub struct State {
     pub yaw: f64,
     pub pitch: f64,
     pub fov: f64,
+    pub denoise_strength: f32,
 }
 impl Default for State {
     fn default() -> Self {
-        Self { open: false, yaw: 0., pitch: 0., fov: 90. }
+        Self { open: false, yaw: 0., pitch: 0., fov: 90., denoise_strength: 0.8 }
     }
 }
 impl State {
@@ -29,6 +30,8 @@ impl State {
             && (-180.0..=180.0).contains(&self.yaw)
             && (-90.0..=90.0).contains(&self.pitch)
             && (30.0..=120.0).contains(&self.fov)
+            && self.denoise_strength.is_finite()
+            && (0.0..=1.0).contains(&self.denoise_strength)
     }
 }
 #[derive(Clone)]
@@ -264,6 +267,7 @@ pub fn windows(app: &mut PhotocraftApp, ctx: &egui::Context) {
     }
     let mut open = true;
     let mut edit = None;
+    let mut denoise = false;
     let mut state = app.ui.sphere360.clone();
     egui::Window::new(tl!("360° Workspace")).id(egui::Id::new("sphere360-workspace")).open(&mut open).default_width(580.).resizable(true).show(ctx, |ui| {
         ui.label(tl!("Monoscopic 360 × 180° · equirectangular"));
@@ -279,7 +283,7 @@ pub fn windows(app: &mut PhotocraftApp, ctx: &egui::Context) {
                 }
             }
             if ui.button(tl!("Reset view")).clicked() {
-                state = State { open: true, ..State::default() };
+                state = State { open: true, denoise_strength: state.denoise_strength, ..State::default() };
             }
         });
         ui.add(egui::Slider::new(&mut state.yaw, -180.0..=180.0).text(tl!("Look left / right")));
@@ -343,9 +347,23 @@ pub fn windows(app: &mut PhotocraftApp, ctx: &egui::Context) {
             ui.weak(reason);
         }
         ui.weak(tl!("Edits affect this layer only. Undo restores its previous pixels."));
+        ui.separator();
+        ui.label(tl!("360 denoise · active RGB or grayscale layer"));
+        ui.add(egui::Slider::new(&mut state.denoise_strength, 0.0..=1.0).text(tl!("Noise reduction")));
+        let reason = app.session.disabled_reason("sphere360.denoise");
+        if ui.add_enabled(reason.is_none() && state.denoise_strength > 0.0, egui::Button::new(tl!("Auto denoise sphere"))).clicked() {
+            denoise = true;
+        }
+        if let Some(reason) = reason {
+            ui.weak(reason);
+        }
+        ui.weak(tl!("Estimates noise and protects edges across the seam and poles. Review fine detail; undo is available."));
     });
     state.open = open;
     app.ui.sphere360 = state;
+    if denoise && let Err(error) = app.run("sphere360.denoise", json!({"strength":app.ui.sphere360.denoise_strength})) {
+        cache.error = Some(error);
+    }
     if let Some((columns, reset)) = edit {
         match app.run("sphere360.yaw", json!({"columns":columns})) {
             Ok(result) => {
@@ -370,6 +388,17 @@ pub fn windows(app: &mut PhotocraftApp, ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn denoise_state_is_backward_compatible_and_bounded() {
+        let old: State = serde_json::from_value(json!({"open":true,"yaw":20,"pitch":0,"fov":90})).unwrap();
+        assert_eq!(old.denoise_strength, 0.8);
+        assert!(old.valid());
+        for value in [-1.0, 2.0, f32::NAN] {
+            assert!(!State { denoise_strength: value, ..old.clone() }.valid());
+        }
+        let stored = State { denoise_strength: 0.35, ..old };
+        assert_eq!(serde_json::from_value::<State>(json!(stored)).unwrap(), stored);
+    }
     #[test]
     fn panorama_view_handles_seam_poles_and_transparency() {
         let (w, h) = (512, 256);

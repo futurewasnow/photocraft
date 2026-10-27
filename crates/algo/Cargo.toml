@@ -15,6 +15,7 @@ photocraft-color = { workspace = true }
 photocraft-raster = { workspace = true }
 serde = { workspace = true }
 rustfft = "6.4.1"
+sphere-core = { path = "../../vendor/sphere-core" }
 
 # Parallel tiles on native; wasm builds stay single-threaded.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

@@ -65,7 +65,55 @@ Serialized UI state includes `sphere360`; older state gets the default closed vi
 negative values move them left. Large integers wrap modulo the canvas width. Use
 `edit.undo` / `edit.redo` through the normal command path.
 
-## Verification scope
+## Spherical denoising (development)
+
+The panel's **Auto denoise sphere** button dispatches `sphere360.denoise` through
+the same engine/job path as CLI and automation. It estimates noise from bounded
+opaque samples and filters on the sphere, including longitude wrap and poles.
+The strength slider is saved with UI state; Reset view keeps its setting.
+
+```json
+["engine.execute", {"command":"sphere360.denoise", "params":{"strength":0.8}}]
+```
+
+Optional parameters: `sigma` (null for automatic, otherwise 0..0.15 in linear RGB)
+and `radius_pixels` (0.5..3, default 1.5 equatorial pixels). Unknown fields fail.
+The active raster layer must be RGB or grayscale, unmasked, and on a mono full-
+sphere 2:1 canvas, without selection/Quick Mask/channel targeting. CMYK/Lab and
+packed stereo are not validated finishing workflows. The operation does not move
+pixels, change canvas dimensions, change source depth, or edit other layers.
+
+Pixels convert through the document's embedded ICC profile (or its working
+profile if untagged) to linear RGB and back. Invalid/mismatched profiles fail.
+Alpha and hidden fully transparent samples remain unchanged, and skipped denoising
+does not incur a colour round trip. The job stages its edits, supports cancellation,
+and commits a single undo step. Source files are not overwritten.
+
+This is conservative **spatial still denoising**. It cannot promise noiseless
+texture or replace temporal video restoration. It does not automatically detect
+opaque tripods or repair lens parallax. The shared kernel is a pinned first-party
+snapshot under `vendor/sphere-core`; see `SOURCE.json` and `ATTRIBUTION.md`.
+
+Working memory includes two linear RGBA float frames (32 bytes per source pixel),
+24 latitude-dependent sampling taps per row (576 bytes per row), up to 8 MiB
+of native-channel band storage, plus document tiles/history. The core
+rejects images over 128 Mi-pixels; it does not silently downscale large panoramas.
+Run `cargo run --release -p photocraft-engine --example sphere360_denoise_bench`
+for a 33.6 MP end-to-end command timing and byte-exact undo check. This entry
+documents the implementation contract; see the current verification report for
+tested status rather than interpreting source code as acceptance.
+
+Before the latitude-tap optimization on 2026-10-27, the release example processed an 8192 x 4096 RGBA16 procedural
+image (33.6 MP), automatically estimating sigma 0.029655 from 32,768 sampled
+blocks. Denoising applied, dimensions stayed unchanged, and undo restored every
+native source byte. Command time was 264.03 seconds with two Rayon threads while
+native compilation was active on an i7-6820HK. This is one loaded-host measurement,
+not a speed comparison or visual-quality acceptance. Linear frames used 1 GiB
+of storage plus native bands, document/history and other process allocations.
+The ignored suite artifacts `photocraft-denoise-bench-v1.json` and
+`photocraft-denoise-bench-run-v1.json` record output hashes and run conditions.
+
+## Previous workspace verification
 
 Tests cover directional sampling at the front, seam and poles; premultiplied
 transparency; malformed geometry; atomic view commands, menu-cache invalidation and state round-trip;
