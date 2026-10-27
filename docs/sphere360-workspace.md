@@ -153,6 +153,17 @@ Run the 33.6 MP release command benchmark with
 `cargo run --release -p photocraft-engine --example sphere360_denoise_bench -- --pole`.
 It verifies output change and byte-exact undo; it does not certify image quality.
 
+The first 2026-10-27 release run completed a 20° nadir repair with 5° feather on
+an 8192×4096 RGBA16 procedural panorama in 36.39 seconds. The donor was a 512×512
+white rectilinear plate with 90° horizontal FOV. Dimensions remained unchanged,
+output pixels changed, and undo restored every native source byte. Two Rayon
+threads were used while other compilation was active on the i7-6820HK. There is
+no controlled speed comparison. Linear source/output frames used 1 GiB, the donor
+4 MiB, plus native bands capped at 8 MiB and document/history allocations. A future
+cap-only conversion path could avoid allocating and converting the full sphere;
+that optimization is not implemented. This benchmark started before subsequent
+TLS dependency updates and is image-command evidence, not patched-app acceptance.
+
 ## Previous workspace verification
 
 Tests cover directional sampling at the front, seam and poles; premultiplied
