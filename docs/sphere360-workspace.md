@@ -113,6 +113,46 @@ of storage plus native bands, document/history and other process allocations.
 The ignored suite artifacts `photocraft-denoise-bench-v1.json` and
 `photocraft-denoise-bench-run-v1.json` record output hashes and run conditions.
 
+## Supplied clean-plate pole repair
+
+The 360 workspace now has a collapsible **Nadir / zenith repair** section. Open
+a rectilinear repair image in another tab, select its intended raster layer,
+return to the panorama and choose that image in the source selector. Set its
+actual horizontal field of view, the pole, rotation, cap radius and feather.
+**Inspect pole** points the preview toward the cap; **Apply pole repair** applies
+the supplied image as one undoable edit. This section is under native acceptance
+testing; implementation alone is not release approval.
+
+The command is `sphere360.patchPole`:
+
+```json
+{"donor_document":42,"horizontal_fov":90,"patch":{"pole":"nadir","radius_degrees":20,"feather_degrees":5,"yaw":0}}
+```
+
+`donor_document` is the open document's identity, not its tab index or a file
+path. The active donor raster's raw pixels are used; its layer opacity, blend
+mode, other layers and selection are not composited. Apply masks to a copy first.
+The target must be a 2:1 RGB/grayscale raster with no selection or layer masks,
+and pixel/transparency locks must allow editing. Source and target profiles are
+converted independently through linear RGB; native target depth/profile and
+canvas dimensions remain intact. Partial-alpha donors composite over the target,
+and pixels outside the cap remain exact. The complete cap must fit inside the
+donor's projection, including the bilinear footprint.
+
+Background jobs capture the donor pixels when started. Later edits to another
+tab do not change the pending repair. Cancellation discards the staged result.
+The shared pixel writer avoids rewriting unchanged bands. No original file is
+saved by this command; normal Save/Export remains a separate action.
+
+This workflow does not extract a retouching view yet, find opaque tripods or
+drones, align arbitrary photographs, reconstruct missing scenery, or track a
+repair through video. Those remain separate requirements. A wrong FOV or poorly
+aligned plate can produce visible mismatch and requires visual review.
+
+Run the 33.6 MP release command benchmark with
+`cargo run --release -p photocraft-engine --example sphere360_denoise_bench -- --pole`.
+It verifies output change and byte-exact undo; it does not certify image quality.
+
 ## Previous workspace verification
 
 Tests cover directional sampling at the front, seam and poles; premultiplied

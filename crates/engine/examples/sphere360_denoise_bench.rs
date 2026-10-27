@@ -1,4 +1,4 @@
-//! Manual 33.6 MP release benchmark of the complete colour-managed editor command.
+//! Manual 33.6 MP release benchmark of colour-managed denoise, or pole repair with `--pole`.
 use photocraft_engine::{EngineError, Session};
 use photocraft_geom::Rect;
 use serde_json::json;
@@ -28,10 +28,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     })?;
     let original = session.active().ok_or("missing document")?.doc.clone();
+    let pole = std::env::args().any(|arg| arg == "--pole");
+    let donor = if pole {
+        session.execute("file.new", json!({"width":512,"height":512,"depth":16,"background":"white"}))?;
+        let id = session.active().ok_or("missing donor document")?.doc.id.0;
+        if !session.set_active(0) {
+            return Err("missing target document".into());
+        }
+        Some(id)
+    } else {
+        None
+    };
     let started = Instant::now();
-    let report = session.execute("sphere360.denoise", json!({}))?;
+    let report = if let Some(donor) = donor {
+        session.execute("sphere360.patchPole", json!({"donor_document":donor,"horizontal_fov":90}))?
+    } else {
+        session.execute("sphere360.denoise", json!({}))?
+    };
     let seconds = started.elapsed().as_secs_f64();
-    if report["noise"]["applied"] != true {
+    if !pole && report["noise"]["applied"] != true {
         return Err("benchmark did not exercise denoising".into());
     }
     let finished = session.active().ok_or("missing output")?.doc.clone();
@@ -52,10 +67,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         source_hash.update(&source);
         output_hash.update(&read(&finished)?);
     }
+    if source_hash.finalize() == output_hash.finalize() {
+        return Err("benchmark output did not change".into());
+    }
     println!(
         "{}",
         serde_json::to_string_pretty(
-            &json!({"width":width,"height":height,"depth":16,"seconds":seconds,"report":report,"undo_bit_exact":true,"source_blake3":source_hash.finalize().to_hex().to_string(),"output_blake3":output_hash.finalize().to_hex().to_string(),"linear_frame_storage_bytes":u64::from(width)*u64::from(height)*32,"latitude_tap_storage_bytes":u64::from(height)*576,"native_band_limit_bytes":8*1024*1024,"note":"single-host synthetic measurement, no baseline or quality approval"})
+            &json!({"command":if pole {"sphere360.patchPole"} else {"sphere360.denoise"},"width":width,"height":height,"depth":16,"seconds":seconds,"report":report,"undo_bit_exact":true,"source_blake3":source_hash.finalize().to_hex().to_string(),"output_blake3":output_hash.finalize().to_hex().to_string(),"linear_frame_storage_bytes":u64::from(width)*u64::from(height)*32,"latitude_tap_storage_bytes":if pole {0} else {u64::from(height)*576},"donor_linear_bytes":if pole {512*512*16} else {0},"native_band_limit_bytes":8*1024*1024,"note":"single-host synthetic measurement, no baseline or quality approval"})
         )?
     );
     Ok(())

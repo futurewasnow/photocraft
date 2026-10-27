@@ -9,68 +9,61 @@ use photocraft_color::ColorMode;
 use photocraft_geom::Rect;
 use serde_json::{Value, json};
 
-fn failure(error: impl std::fmt::Display) -> EngineError {
+pub(super) fn failure(error: impl std::fmt::Display) -> EngineError {
     EngineError::Other(error.to_string())
 }
-fn sphere_error(error: sphere::Error) -> EngineError {
+pub(super) fn sphere_error(error: sphere::Error) -> EngineError {
     match error {
         sphere::Error::Cancelled => EngineError::Cancelled,
         other => failure(other),
     }
 }
-fn enabled(s: &Session) -> std::result::Result<(), String> {
+pub(super) fn enabled(s: &Session) -> std::result::Result<(), String> {
     let state = s.active().ok_or("no document open")?;
     let doc = &state.doc;
     if doc.size.height == 0 || u64::from(doc.size.width) != 2 * u64::from(doc.size.height) {
-        return Err("360 denoise requires a monoscopic full-sphere 2:1 canvas".into());
+        return Err("360 finishing requires a monoscopic full-sphere 2:1 canvas".into());
     }
     if !matches!(doc.mode, ColorMode::Rgb | ColorMode::Grayscale) {
-        return Err("360 denoise currently supports RGB and grayscale; convert a copy through Image > Mode first".into());
+        return Err("360 finishing currently supports RGB and grayscale; convert a copy through Image > Mode first".into());
     }
     if doc.selection.is_some() || doc.quick_mask.is_some() || state.channel_view.target != crate::channel_cmds::ChannelTarget::Composite {
-        return Err("deselect, leave Quick Mask and target composite layer pixels before 360 denoising".into());
+        return Err("deselect, leave Quick Mask and target composite layer pixels before 360 finishing".into());
     }
     let id = state.active_layer.ok_or("no active layer")?;
     let layer = doc.layer(id).ok_or("active layer missing")?;
-    let surface = layer.surface().ok_or("360 denoise requires a raster layer")?;
+    let surface = layer.surface().ok_or("360 finishing requires a raster layer")?;
     if surface.format().mode != doc.mode {
         return Err("layer colour mode differs from the document".into());
     }
     if layer.mask.is_some() || layer.vector_mask.is_some() {
-        return Err("apply or remove layer masks before full-sphere denoising".into());
+        return Err("apply or remove layer masks before full-sphere finishing".into());
     }
     crate::commands::check_pixels_unlocked(doc, id).map_err(|e| e.to_string())?;
     sphere::pixel_count(doc.size.width, doc.size.height).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// Bands bound native-channel scratch; the two linear RGBA frames are bounded by sphere-core.
-fn process(
-    surface: &mut photocraft_raster::Surface,
+/// Bands bound native-channel scratch; linear frames are bounded by sphere-core.
+pub(super) fn read_linear(
+    surface: &photocraft_raster::Surface,
     width: u32,
     height: u32,
     to_linear: &Transform,
-    from_linear: &Transform,
-    options: DenoiseOptions,
     ctx: &JobCtx,
-) -> Result<DenoiseReport> {
+    progress: (f32, f32),
+) -> Result<Vec<[f32; 4]>> {
     ctx.check()?;
     let format = surface.format();
     let colors = format.mode.color_channels();
     let channels = format.channels();
-    if width > i32::MAX as u32
-        || height > i32::MAX as u32
-        || to_linear.inputs() != colors
-        || to_linear.outputs() != 3
-        || from_linear.inputs() != 3
-        || from_linear.outputs() != colors
-    {
+    if width > i32::MAX as u32 || height > i32::MAX as u32 || to_linear.inputs() != colors || to_linear.outputs() != 3 {
         return Err(failure("unsupported spherical colour transform or canvas dimensions"));
     }
     let row_samples = (width as usize)
         .checked_mul(channels)
         .filter(|n| *n > 0 && *n <= 2 * 1024 * 1024)
-        .ok_or_else(|| failure("360 denoise row exceeds the 8 MiB band limit"))?;
+        .ok_or_else(|| failure("360 conversion row exceeds the 8 MiB band limit"))?;
     let rows = (2 * 1024 * 1024 / row_samples).min(128);
     let mut input = sphere::pixels(width, height).map_err(sphere_error)?;
     for y in (0..height).step_by(rows) {
@@ -82,18 +75,92 @@ fn process(
         let destination = input.get_mut(offset..offset + count).ok_or_else(|| failure("invalid 360 conversion band"))?;
         for (native, rgba) in data.chunks_exact(channels).zip(destination) {
             if native.iter().any(|v| !v.is_finite()) {
-                return Err(failure("360 denoise requires finite source pixels"));
+                return Err(failure("360 finishing requires finite source pixels"));
             }
             let alpha = if format.alpha { native.get(colors).copied().ok_or_else(|| failure("missing alpha channel"))? } else { 1.0 };
             if !(0.0..=1.0).contains(&alpha) {
-                return Err(failure("360 denoise requires alpha in 0..1"));
+                return Err(failure("360 finishing requires alpha in 0..1"));
             }
             let mut linear = [0.; 3];
             to_linear.eval(native.get(..colors).ok_or_else(|| failure("missing colour channels"))?, &mut linear);
             *rgba = [linear[0] * alpha, linear[1] * alpha, linear[2] * alpha, alpha];
         }
-        ctx.progress(0.15 * end as f32 / height as f32, "Preparing linear 360 pixels");
+        ctx.progress(progress.0 + (progress.1 - progress.0) * end as f32 / height as f32, "Preparing linear 360 pixels");
     }
+    Ok(input)
+}
+
+/// Preserve untouched native samples exactly. Patches may update alpha; denoise never does.
+pub(super) fn write_linear(
+    surface: &mut photocraft_raster::Surface,
+    size: photocraft_geom::Size,
+    from_linear: &Transform,
+    input: &[[f32; 4]],
+    pixels: &[[f32; 4]],
+    preserve_alpha: bool,
+    ctx: &JobCtx,
+) -> Result<()> {
+    ctx.check()?;
+    let (width, height) = (size.width, size.height);
+    let format = surface.format();
+    let colors = format.mode.color_channels();
+    let channels = format.channels();
+    if from_linear.inputs() != 3
+        || from_linear.outputs() != colors
+        || sphere::pixel_count(width, height).map_err(sphere_error)? != input.len()
+        || input.len() != pixels.len()
+    {
+        return Err(failure("invalid spherical output transform or buffer"));
+    }
+    let row_samples = (width as usize)
+        .checked_mul(channels)
+        .filter(|n| *n > 0 && *n <= 2 * 1024 * 1024)
+        .ok_or_else(|| failure("360 output row exceeds the 8 MiB band limit"))?;
+    let rows = (2 * 1024 * 1024 / row_samples).min(128);
+    for y in (0..height).step_by(rows) {
+        ctx.check()?;
+        let end = y.saturating_add(rows as u32).min(height);
+        let bounds = Rect::new(0, y as i32, width as i32, end as i32);
+        let offset = y as usize * width as usize;
+        let count = (end - y) as usize * width as usize;
+        let output = pixels.get(offset..offset + count).ok_or_else(|| failure("invalid 360 output band"))?;
+        let originals = input.get(offset..offset + count).ok_or_else(|| failure("invalid 360 input band"))?;
+        if output == originals {
+            ctx.progress(0.85 + 0.15 * end as f32 / height as f32, "Retaining unchanged layer pixels");
+            continue;
+        }
+        let mut native = surface.try_read_region(bounds).map_err(failure)?;
+        for ((pixel, original), destination) in output.iter().zip(originals).zip(native.chunks_exact_mut(channels)) {
+            if pixel == original || pixel[3] < 1e-6 {
+                continue;
+            }
+            let straight = [pixel[0] / pixel[3], pixel[1] / pixel[3], pixel[2] / pixel[3]];
+            let output = destination.get_mut(..colors).ok_or_else(|| failure("invalid native colour channels"))?;
+            from_linear.eval(&straight, output);
+            if output.iter().any(|v| !v.is_finite()) {
+                return Err(failure("360 colour conversion produced non-finite pixels"));
+            }
+            if format.alpha && !preserve_alpha {
+                *destination.get_mut(colors).ok_or_else(|| failure("missing native alpha"))? = pixel[3];
+            }
+        }
+        ctx.check()?;
+        surface.try_write_region(bounds, &native).map_err(failure)?;
+        ctx.progress(0.85 + 0.15 * end as f32 / height as f32, "Saving finished layer pixels");
+    }
+    ctx.check()
+}
+
+fn process(
+    surface: &mut photocraft_raster::Surface,
+    width: u32,
+    height: u32,
+    to_linear: &Transform,
+    from_linear: &Transform,
+    options: DenoiseOptions,
+    ctx: &JobCtx,
+) -> Result<DenoiseReport> {
+    let input = read_linear(surface, width, height, to_linear, ctx, (0.0, 0.15))?;
     let panorama = sphere::Panorama::new(width, height, &input).map_err(sphere_error)?;
     let finished = sphere::finish::denoise_with_control(&panorama, options, &|progress| {
         ctx.progress(0.15 + progress * 0.7, "Denoising the sphere");
@@ -105,32 +172,7 @@ fn process(
         ctx.check()?;
         return Ok(finished.report);
     }
-    for y in (0..height).step_by(rows) {
-        ctx.check()?;
-        let end = y.saturating_add(rows as u32).min(height);
-        let bounds = Rect::new(0, y as i32, width as i32, end as i32);
-        let mut native = surface.try_read_region(bounds).map_err(failure)?;
-        let offset = y as usize * width as usize;
-        let count = (end - y) as usize * width as usize;
-        let pixels = finished.pixels.get(offset..offset + count).ok_or_else(|| failure("invalid 360 output band"))?;
-        let originals = input.get(offset..offset + count).ok_or_else(|| failure("invalid 360 input band"))?;
-        for ((pixel, original), destination) in pixels.iter().zip(originals).zip(native.chunks_exact_mut(channels)) {
-            // Retain alpha and hidden native samples exactly. Also skip unchanged pixels.
-            if pixel == original || pixel[3] < 1e-6 {
-                continue;
-            }
-            let straight = [pixel[0] / pixel[3], pixel[1] / pixel[3], pixel[2] / pixel[3]];
-            let output = destination.get_mut(..colors).ok_or_else(|| failure("invalid native colour channels"))?;
-            from_linear.eval(&straight, output);
-            if output.iter().any(|v| !v.is_finite()) {
-                return Err(failure("360 denoise colour conversion produced non-finite pixels"));
-            }
-        }
-        ctx.check()?;
-        surface.try_write_region(bounds, &native).map_err(failure)?;
-        ctx.progress(0.85 + 0.15 * end as f32 / height as f32, "Saving denoised layer pixels");
-    }
-    ctx.check()?;
+    write_linear(surface, photocraft_geom::Size::new(width, height), from_linear, &input, &finished.pixels, true, ctx)?;
     Ok(finished.report)
 }
 

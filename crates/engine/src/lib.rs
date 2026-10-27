@@ -119,6 +119,7 @@ pub mod snap;
 pub mod solid_fill_cmds;
 mod sphere360_cmds;
 mod sphere360_finish_cmds;
+mod sphere360_pole_cmds;
 pub mod stamp_cmds;
 pub mod style_asl_cmds;
 pub mod swatch_cmds;

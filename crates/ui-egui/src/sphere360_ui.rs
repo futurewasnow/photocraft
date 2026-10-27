@@ -16,10 +16,39 @@ pub struct State {
     pub pitch: f64,
     pub fov: f64,
     pub denoise_strength: f32,
+    pub pole_repair: PoleRepairState,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PoleRepairState {
+    pub donor_document: Option<u64>,
+    pub zenith: bool,
+    pub radius: f64,
+    pub feather: f64,
+    pub horizontal_fov: f64,
+    pub yaw: f64,
+}
+impl Default for PoleRepairState {
+    fn default() -> Self {
+        Self { donor_document: None, zenith: false, radius: 20., feather: 5., horizontal_fov: 90., yaw: 0. }
+    }
+}
+impl PoleRepairState {
+    fn valid(&self) -> bool {
+        self.radius.is_finite()
+            && (0.1..=60.).contains(&self.radius)
+            && self.feather.is_finite()
+            && self.feather > 0.
+            && self.feather <= self.radius
+            && self.horizontal_fov.is_finite()
+            && (1.0..170.).contains(&self.horizontal_fov)
+            && self.yaw.is_finite()
+            && (-180.0..=180.).contains(&self.yaw)
+    }
 }
 impl Default for State {
     fn default() -> Self {
-        Self { open: false, yaw: 0., pitch: 0., fov: 90., denoise_strength: 0.8 }
+        Self { open: false, yaw: 0., pitch: 0., fov: 90., denoise_strength: 0.8, pole_repair: PoleRepairState::default() }
     }
 }
 impl State {
@@ -32,6 +61,7 @@ impl State {
             && (30.0..=120.0).contains(&self.fov)
             && self.denoise_strength.is_finite()
             && (0.0..=1.0).contains(&self.denoise_strength)
+            && self.pole_repair.valid()
     }
 }
 #[derive(Clone)]
@@ -268,99 +298,155 @@ pub fn windows(app: &mut PhotocraftApp, ctx: &egui::Context) {
     let mut open = true;
     let mut edit = None;
     let mut denoise = false;
+    let mut patch = false;
     let mut state = app.ui.sphere360.clone();
-    egui::Window::new(tl!("360° Workspace")).id(egui::Id::new("sphere360-workspace")).open(&mut open).default_width(580.).resizable(true).show(ctx, |ui| {
-        ui.label(tl!("Monoscopic 360 × 180° · equirectangular"));
-        if !valid {
-            ui.weak(tl!("Open a full-sphere 2:1 panorama to inspect it here."));
-            return;
-        }
-        ui.horizontal_wrapped(|ui| {
-            for (label, yaw, pitch) in [("Front", 0., 0.), ("Seam", 180., 0.), ("Nadir", 0., -90.), ("Zenith", 0., 90.)] {
-                if ui.button(tl!(label)).clicked() {
-                    state.yaw = yaw;
-                    state.pitch = pitch;
-                }
+    egui::Window::new(tl!("360° Workspace")).id(egui::Id::new("sphere360-workspace")).open(&mut open).default_width(580.).resizable(true).vscroll(true).show(
+        ctx,
+        |ui| {
+            ui.label(tl!("Monoscopic 360 × 180° · equirectangular"));
+            if !valid {
+                ui.weak(tl!("Open a full-sphere 2:1 panorama to inspect it here."));
+                return;
             }
-            if ui.button(tl!("Reset view")).clicked() {
-                state = State { open: true, denoise_strength: state.denoise_strength, ..State::default() };
-            }
-        });
-        ui.add(egui::Slider::new(&mut state.yaw, -180.0..=180.0).text(tl!("Look left / right")));
-        ui.add(egui::Slider::new(&mut state.pitch, -90.0..=90.0).text(tl!("Look up / down")));
-        ui.add(egui::Slider::new(&mut state.fov, 30.0..=120.0).text(tl!("Field of view")));
-        if let Some(error) = &cache.error {
-            ui.label(error);
-            if ui.button(tl!("Retry preview")).clicked() {
-                cache.key = None;
-                cache.view = None;
-                ctx.request_repaint();
-            }
-        }
-        if cache.running.is_some() {
-            ui.spinner();
-            ui.weak(tl!("Updating preview…"));
-            ctx.request_repaint_after(std::time::Duration::from_millis(40));
-        }
-        if let Some(image) = &cache.image {
-            let key = [state.yaw.to_bits(), state.pitch.to_bits(), state.fov.to_bits()];
-            if cache.view != Some(key) {
-                match project(image, &state, 512, 288) {
-                    Ok(image) => {
-                        if let Some(texture) = &mut cache.texture {
-                            texture.set(image, egui::TextureOptions::LINEAR);
-                        } else {
-                            cache.texture = Some(ctx.load_texture("sphere360-view", image, egui::TextureOptions::LINEAR));
-                        }
-                        cache.view = Some(key);
+            ui.horizontal_wrapped(|ui| {
+                for (label, yaw, pitch) in [("Front", 0., 0.), ("Seam", 180., 0.), ("Nadir", 0., -90.), ("Zenith", 0., 90.)] {
+                    if ui.button(tl!(label)).clicked() {
+                        state.yaw = yaw;
+                        state.pitch = pitch;
                     }
-                    Err(error) => cache.error = Some(error),
                 }
-            }
-            if let Some(texture) = &cache.texture {
-                let width = ui.available_width().clamp(120., 900.);
-                let response = ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(width, width * 9. / 16.)).sense(egui::Sense::drag()));
-                if response.dragged() {
-                    let delta = ui.input(|i| i.pointer.delta());
-                    state.yaw = (state.yaw - f64::from(delta.x / width) * state.fov + 180.).rem_euclid(360.) - 180.;
-                    state.pitch = (state.pitch + f64::from(delta.y / width) * state.fov).clamp(-90., 90.);
+                if ui.button(tl!("Reset view")).clicked() {
+                    state = State { open: true, denoise_strength: state.denoise_strength, pole_repair: state.pole_repair.clone(), ..State::default() };
+                }
+            });
+            ui.add(egui::Slider::new(&mut state.yaw, -180.0..=180.0).text(tl!("Look left / right")));
+            ui.add(egui::Slider::new(&mut state.pitch, -90.0..=90.0).text(tl!("Look up / down")));
+            ui.add(egui::Slider::new(&mut state.fov, 30.0..=120.0).text(tl!("Field of view")));
+            if let Some(error) = &cache.error {
+                ui.label(error);
+                if ui.button(tl!("Retry preview")).clicked() {
+                    cache.key = None;
+                    cache.view = None;
                     ctx.request_repaint();
                 }
             }
-        }
-        ui.weak(tl!("Display preview · up to 2048 px source · drag to look around"));
-        ui.separator();
-        ui.label(tl!("Active raster layer — lossless horizontal shift"));
-        let reason = app.session.disabled_reason("sphere360.yaw");
-        ui.add_enabled_ui(reason.is_none(), |ui| {
-            ui.horizontal_wrapped(|ui| {
-                let width = active.as_ref().map_or(0, |(d, _)| d.size.width);
-                if ui.button(tl!("Set heading as front")).clicked() {
-                    edit = Some((-(state.yaw / 360. * f64::from(width)).round() as i64, true));
+            if cache.running.is_some() {
+                ui.spinner();
+                ui.weak(tl!("Updating preview…"));
+                ctx.request_repaint_after(std::time::Duration::from_millis(40));
+            }
+            if let Some(image) = &cache.image {
+                let key = [state.yaw.to_bits(), state.pitch.to_bits(), state.fov.to_bits()];
+                if cache.view != Some(key) {
+                    match project(image, &state, 512, 288) {
+                        Ok(image) => {
+                            if let Some(texture) = &mut cache.texture {
+                                texture.set(image, egui::TextureOptions::LINEAR);
+                            } else {
+                                cache.texture = Some(ctx.load_texture("sphere360-view", image, egui::TextureOptions::LINEAR));
+                            }
+                            cache.view = Some(key);
+                        }
+                        Err(error) => cache.error = Some(error),
+                    }
                 }
-                if ui.button(tl!("Move seam 180°")).clicked() {
-                    edit = Some((i64::from(width / 2), false));
+                if let Some(texture) = &cache.texture {
+                    let width = ui.available_width().clamp(120., 900.);
+                    let response = ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(width, width * 9. / 16.)).sense(egui::Sense::drag()));
+                    if response.dragged() {
+                        let delta = ui.input(|i| i.pointer.delta());
+                        state.yaw = (state.yaw - f64::from(delta.x / width) * state.fov + 180.).rem_euclid(360.) - 180.;
+                        state.pitch = (state.pitch + f64::from(delta.y / width) * state.fov).clamp(-90., 90.);
+                        ctx.request_repaint();
+                    }
                 }
+            }
+            ui.weak(tl!("Display preview · up to 2048 px source · drag to look around"));
+            ui.separator();
+            ui.label(tl!("Active raster layer — lossless horizontal shift"));
+            let reason = app.session.disabled_reason("sphere360.yaw");
+            ui.add_enabled_ui(reason.is_none(), |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    let width = active.as_ref().map_or(0, |(d, _)| d.size.width);
+                    if ui.button(tl!("Set heading as front")).clicked() {
+                        edit = Some((-(state.yaw / 360. * f64::from(width)).round() as i64, true));
+                    }
+                    if ui.button(tl!("Move seam 180°")).clicked() {
+                        edit = Some((i64::from(width / 2), false));
+                    }
+                });
             });
-        });
-        if let Some(reason) = reason {
-            ui.weak(reason);
-        }
-        ui.weak(tl!("Edits affect this layer only. Undo restores its previous pixels."));
-        ui.separator();
-        ui.label(tl!("360 denoise · active RGB or grayscale layer"));
-        ui.add(egui::Slider::new(&mut state.denoise_strength, 0.0..=1.0).text(tl!("Noise reduction")));
-        let reason = app.session.disabled_reason("sphere360.denoise");
-        if ui.add_enabled(reason.is_none() && state.denoise_strength > 0.0, egui::Button::new(tl!("Auto denoise sphere"))).clicked() {
-            denoise = true;
-        }
-        if let Some(reason) = reason {
-            ui.weak(reason);
-        }
-        ui.weak(tl!("Estimates noise and protects edges across the seam and poles. Review fine detail; undo is available."));
-    });
+            if let Some(reason) = reason {
+                ui.weak(reason);
+            }
+            ui.weak(tl!("Edits affect this layer only. Undo restores its previous pixels."));
+            ui.separator();
+            ui.label(tl!("360 denoise · active RGB or grayscale layer"));
+            ui.add(egui::Slider::new(&mut state.denoise_strength, 0.0..=1.0).text(tl!("Noise reduction")));
+            let reason = app.session.disabled_reason("sphere360.denoise");
+            if ui.add_enabled(reason.is_none() && state.denoise_strength > 0.0, egui::Button::new(tl!("Auto denoise sphere"))).clicked() {
+                denoise = true;
+            }
+            if let Some(reason) = reason {
+                ui.weak(reason);
+            }
+            ui.weak(tl!("Estimates noise and protects edges across the seam and poles. Review fine detail; undo is available."));
+            ui.separator();
+            egui::CollapsingHeader::new(tl!("Nadir / zenith repair")).id_salt("sphere360-pole-repair").show(ui, |ui| {
+                ui.weak(tl!("Open a rectilinear clean plate in another tab. Its active raster pixels supply the repair."));
+                let repair = &mut state.pole_repair;
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut repair.zenith, false, tl!("Nadir"));
+                    ui.selectable_value(&mut repair.zenith, true, tl!("Zenith"));
+                    if ui.button(tl!("Inspect pole")).clicked() {
+                        state.pitch = if repair.zenith { 90. } else { -90. };
+                        state.yaw = repair.yaw;
+                    }
+                });
+                let documents: Vec<_> = app
+                    .session
+                    .documents()
+                    .iter()
+                    .filter(|d| active.as_ref().is_none_or(|(target, _)| target.id != d.doc.id))
+                    .map(|d| (d.doc.id.0, d.doc.name.clone()))
+                    .collect();
+                let selected = documents.iter().find(|(id, _)| Some(*id) == repair.donor_document);
+                let donor_open = selected.is_some();
+                egui::ComboBox::from_id_salt("sphere360-pole-donor")
+                    .selected_text(selected.map_or_else(|| tl!("Choose repair image"), |(_, name)| name.as_str()))
+                    .show_ui(ui, |ui| {
+                        for (id, name) in &documents {
+                            ui.selectable_value(&mut repair.donor_document, Some(*id), name);
+                        }
+                    });
+                ui.add(egui::Slider::new(&mut repair.horizontal_fov, 1.0..=169.0).text(tl!("Source horizontal FOV")));
+                ui.add(egui::Slider::new(&mut repair.yaw, -180.0..=180.0).text(tl!("Repair rotation")));
+                ui.add(egui::Slider::new(&mut repair.radius, 0.1..=60.0).text(tl!("Cap radius")));
+                repair.feather = repair.feather.min(repair.radius);
+                ui.add(egui::Slider::new(&mut repair.feather, 0.1..=repair.radius).text(tl!("Edge feather")));
+                let reason = app.session.disabled_reason("sphere360.patchPole");
+                if ui.add_enabled(donor_open && reason.is_none(), egui::Button::new(tl!("Apply pole repair"))).clicked() {
+                    patch = true;
+                }
+                if let Some(reason) = reason {
+                    ui.weak(reason);
+                }
+                ui.weak(tl!("FOV must match the source projection. Colour-managed blend, one undo step. No automatic object removal or video tracking."));
+            });
+        },
+    );
     state.open = open;
     app.ui.sphere360 = state;
+    if patch {
+        let repair = &app.ui.sphere360.pole_repair;
+        let params = json!({"donor_document":repair.donor_document,"horizontal_fov":repair.horizontal_fov,
+            "patch":{"pole":if repair.zenith {"zenith"} else {"nadir"},"radius_degrees":repair.radius,
+                "feather_degrees":repair.feather,"yaw":repair.yaw}});
+        match app.run("sphere360.patchPole", params) {
+            Ok(_) => cache.error = None,
+            Err(error) => cache.error = Some(error),
+        }
+    }
     if denoise && let Err(error) = app.run("sphere360.denoise", json!({"strength":app.ui.sphere360.denoise_strength})) {
         cache.error = Some(error);
     }
@@ -393,11 +479,29 @@ mod tests {
         let old: State = serde_json::from_value(json!({"open":true,"yaw":20,"pitch":0,"fov":90})).unwrap();
         assert_eq!(old.denoise_strength, 0.8);
         assert!(old.valid());
+        assert_eq!(old.pole_repair, PoleRepairState::default());
         for value in [-1.0, 2.0, f32::NAN] {
             assert!(!State { denoise_strength: value, ..old.clone() }.valid());
         }
         let stored = State { denoise_strength: 0.35, ..old };
         assert_eq!(serde_json::from_value::<State>(json!(stored)).unwrap(), stored);
+    }
+    #[test]
+    fn pole_repair_state_is_bounded_and_persistent() {
+        let state = State {
+            pole_repair: PoleRepairState { donor_document: Some(42), zenith: true, radius: 30., feather: 7., horizontal_fov: 100., yaw: 25. },
+            ..State::default()
+        };
+        assert!(state.valid());
+        assert_eq!(serde_json::from_value::<State>(json!(state)).unwrap(), state);
+        for invalid in [
+            PoleRepairState { feather: 0., ..state.pole_repair.clone() },
+            PoleRepairState { feather: 40., ..state.pole_repair.clone() },
+            PoleRepairState { horizontal_fov: 170., ..state.pole_repair.clone() },
+            PoleRepairState { yaw: f64::NAN, ..state.pole_repair.clone() },
+        ] {
+            assert!(!State { pole_repair: invalid, ..state.clone() }.valid());
+        }
     }
     #[test]
     fn panorama_view_handles_seam_poles_and_transparency() {
