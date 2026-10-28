@@ -703,6 +703,16 @@ The driver receives exact physical sheet size so it does not scale PhotoCraft's 
 Windows raster printing does not establish physical-printer colour fidelity; test critical
 photo output with the actual printer and its profile.
 
+Engine printer-list commands wait at most two seconds for their worker, then
+returns an error if the service is still busy. System and RGB backends each reuse
+one pending query; retrying does not spawn more workers for a stuck service. A
+completion that arrived after a timeout remains available for a retry for up to
+30 seconds. Delivered or older results are refreshed. This bounds discovery
+waiting, not actual print-job submission or arbitrary driver calls. Print One
+Copy skips its remembered-printer lookup when no explicit printer was saved.
+The Print dialog still has direct driver enumeration/page calls; those UI paths
+and physical printing are not covered by this command-layer timeout change.
+
 Desktop commands run composition and submission on a background worker. The UI reports success
 only when the spooler accepts the job; remove submitted jobs in the system print queue. Headless
 `Session::execute` stays synchronous. The returned `pdf` is `null` for a spool-only job, and

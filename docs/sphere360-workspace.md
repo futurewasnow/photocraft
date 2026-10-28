@@ -265,5 +265,26 @@ The workspace now opens taller so the main editing controls are immediately
 visible. Smaller displays retain scrolling. The snapshot harness accepts
 `--scroll-at X,Y --scroll-y N` to verify controls below the fold before a settled
 pointer click. Native build/lint and the UI wasm check pass; wasm retains six
-existing dead-code warnings. The canonical suite's new bounded pole API is not
-yet vendored into this editor, whose pole command still converts full frames.
+existing dead-code warnings. That earlier interaction checkpoint used full-frame
+pole conversion; the subsequent bounded implementation is described above.
+
+## Native banded repair and donor identity — 2026-10-28
+
+Nine finishing integration tests now pass, including discovery of a donor's
+stable session ID through `document.inspect` and preservation of that ID after
+tab indices change. Six synthetic printer-discovery tests also pass. The final
+full-registry command stress test passes in 70.45 seconds, resolving its two
+earlier printer-list/Print One Copy timeout failures. Direct Print-dialog driver
+calls and physical printing remain outside that command-layer result.
+
+The rebuilt native desktop passed a control-channel smoke test on a 1024 x 512
+RGBA16 transparent sphere and a 256 x 256 procedural clean plate. A 60-degree
+nadir patch with 15-degree feather and 25-degree rotation processed 172 rows in
+bounded bands, created one history entry and preserved canvas dimensions/depth.
+Undo restored the exported PNG sample data exactly. The spherical screenshot was
+inspected. This is a synthetic command/preview check, not real-scene or headset
+acceptance. The final rebuild including the printer-discovery fix passed the same
+smoke check, with actual adapter readback confirming NVIDIA GeForce GTX 1070,
+Vulkan, GPU canvas and no device loss. The screenshot was inspected. Engine
+all-target lint also passes. This explicitly selected adapter result does not
+erase the earlier software-DX12 failures or validate physical printing.

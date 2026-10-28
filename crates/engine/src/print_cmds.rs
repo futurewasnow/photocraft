@@ -20,6 +20,7 @@
 
 use std::io::Write as _;
 
+mod printer_discovery;
 mod windows_marks;
 
 use photocraft_color::ColorMode;
@@ -193,10 +194,12 @@ fn cups_spool(job: &PrintJob) -> std::result::Result<String, SpoolError> {
 fn system_printers(_s: &mut Session, p: &Value) -> Result<Value> {
     let named = p.get("printServer").and_then(Value::as_str).filter(|v| !v.is_empty());
     if named.is_none() && system_spooler().is_some() {
-        let list = craft_print::printers();
-        let default = list.iter().find(|p| p.default).map(|p| p.name.clone());
-        let printers: Vec<Value> = list.into_iter().map(|p| json!({"name": p.name, "default": p.default})).collect();
-        return Ok(json!({"server": Value::Null, "default": default, "printers": printers}));
+        return printer_discovery::run(printer_discovery::Kind::System, || {
+            let list = craft_print::printers();
+            let default = list.iter().find(|p| p.default).map(|p| p.name.clone());
+            let printers: Vec<Value> = list.into_iter().map(|p| json!({"name": p.name, "default": p.default})).collect();
+            Ok(json!({"server": Value::Null, "default": default, "printers": printers}))
+        });
     }
     #[cfg(all(not(target_arch = "wasm32"), not(target_os = "windows")))]
     {
@@ -1034,11 +1037,11 @@ fn print_windows(page: &PrintPage, p: &Value, title: &str, copies: u32) -> Resul
 }
 
 fn printers(_: &mut Session, _: &Value) -> Result<Value> {
-    match craft_print::rgb::printers() {
+    printer_discovery::run(printer_discovery::Kind::Rgb, || match craft_print::rgb::printers() {
         Ok(list) => Ok(json!({"supported": true, "printers": list.iter().map(|p| json!({"name": p.name, "default": p.default})).collect::<Vec<_>>()})),
         Err(craft_print::rgb::PrintError::Unsupported) => Ok(json!({"supported": false, "printers": []})),
         Err(e) => Err(other(e)),
-    }
+    })
 }
 
 fn printer_page(_: &mut Session, p: &Value) -> Result<Value> {
@@ -1099,7 +1102,9 @@ fn print_one_copy(s: &mut Session, p: &Value) -> Result<Value> {
     let mut q = last_print(s).unwrap_or_else(|| json!({}));
     // A printer remembered from an earlier session may be gone: then the default takes the job,
     // as the Print dialog falls back (#7410). A list that can't be read decides nothing.
-    if let Ok(listed) = system_printers(s, &q) {
+    if q.get("printer").and_then(Value::as_str).is_some_and(|name| !name.is_empty())
+        && let Ok(listed) = system_printers(s, &q)
+    {
         let names: Vec<&str> = listed["printers"].as_array().into_iter().flatten().filter_map(|p| p["name"].as_str()).collect();
         drop_vanished_printer(&mut q, &names);
     }
