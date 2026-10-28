@@ -25,6 +25,11 @@ The first request on every TCP connection must authenticate. No other method is 
 
 Authenticate once per connection. A later `auth` frame on the same connection gets `{"ok": false, "error": "already authenticated"}` and the connection keeps serving.
 
+`engine.execute` with `document.inspect` returns the document's session-local
+`id`; `session.inspect` includes the same `id` beside each tab's `index`. Use the
+identity for commands such as `sphere360.patchPole`'s `donor_document`; tab indexes
+can change when documents close. Identities are not persistent file identifiers.
+
 After the successful authentication reply, each request is one JSON line:
 
 ```json

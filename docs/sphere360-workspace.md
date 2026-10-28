@@ -130,7 +130,10 @@ The command is `sphere360.patchPole`:
 ```
 
 `donor_document` is the open document's identity, not its tab index or a file
-path. The active donor raster's raw pixels are used; its layer opacity, blend
+path. Read it from `document.inspect`'s `id` or the matching entry's `id` in
+`session.inspect.documents`. The ID remains the same when other tabs close and
+indexes change; discover it again after reopening a file in a new session.
+The active donor raster's raw pixels are used; its layer opacity, blend
 mode, other layers and selection are not composited. Apply masks to a copy first.
 The target must be a 2:1 RGB/grayscale raster with no selection or layer masks,
 and pixel/transparency locks must allow editing. Source and target profiles are

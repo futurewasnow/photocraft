@@ -7,6 +7,22 @@ use photocraft_geom::Size;
 use serde_json::json;
 use std::sync::Arc;
 
+#[test]
+fn pole_donor_id_is_discoverable_and_survives_tab_index_changes() {
+    let mut s = Session::new();
+    s.execute("file.new", json!({"width":64,"height":32,"background":"transparent"})).unwrap();
+    s.execute("file.new", json!({"width":16,"height":16,"background":"#76a9d0"})).unwrap();
+    let donor = s.execute("document.inspect", json!({})).unwrap()["id"].as_u64().expect("document identity exposed");
+    s.execute("document.activate", json!({"document":0})).unwrap();
+    let result = s.execute("sphere360.patchPole", json!({"donor_document":donor,"horizontal_fov":90})).unwrap();
+    assert_eq!(result["donor_document"], donor);
+    s.execute("file.close", json!({"document":0})).unwrap();
+    let session = s.execute("session.inspect", json!({})).unwrap();
+    assert_eq!(session["documents"][0]["index"], 0);
+    assert_eq!(session["documents"][0]["id"], donor);
+    assert_eq!(s.execute("document.inspect", json!({})).unwrap()["id"], donor);
+}
+
 fn document(name: &str, width: u32, height: u32, depth: SampleType, mode: ColorMode, pixel: &[f32]) -> Document {
     let mut doc = Document::new(name, Size::new(width, height), mode, depth);
     let mut layer = Layer::raster(name, PixelFormat::new(mode, depth, true));

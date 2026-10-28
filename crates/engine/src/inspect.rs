@@ -11,6 +11,7 @@ pub fn session(s: &Session) -> Value {
     json!({
         "active": s.active_index(),
         "documents": s.documents().iter().enumerate().map(|(i, d)| json!({
+            "id": d.doc.id.0,
             "index": i,
             "name": d.doc.name,
             "path": d.path,
@@ -29,6 +30,7 @@ pub fn document(d: &DocState) -> Value {
     let selected = d.selected_layers();
     let instances = smart_instances(&doc.layers);
     json!({
+        "id": doc.id.0,
         "name": doc.name,
         "path": &d.path,
         "width": doc.size.width,
