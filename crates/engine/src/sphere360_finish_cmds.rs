@@ -44,6 +44,21 @@ pub(super) fn enabled(s: &Session) -> std::result::Result<(), String> {
     Ok(())
 }
 
+/// A bounded colour-conversion region with a share of the enclosing job's progress.
+#[derive(Clone, Copy)]
+pub(super) struct LinearRegion {
+    pub bounds: Rect,
+    pub progress: (f32, f32),
+}
+impl LinearRegion {
+    fn dimensions(self) -> Result<(u32, u32)> {
+        if self.bounds.x0 != 0 || self.bounds.y0 < 0 || self.bounds.is_empty() {
+            return Err(failure("invalid spherical row region"));
+        }
+        Ok((self.bounds.width(), self.bounds.height()))
+    }
+}
+
 /// Bands bound native-channel scratch; linear frames are bounded by sphere-core.
 pub(super) fn read_linear(
     surface: &photocraft_raster::Surface,
@@ -53,6 +68,15 @@ pub(super) fn read_linear(
     ctx: &JobCtx,
     progress: (f32, f32),
 ) -> Result<Vec<[f32; 4]>> {
+    if width > i32::MAX as u32 || height > i32::MAX as u32 {
+        return Err(failure("unsupported spherical canvas dimensions"));
+    }
+    read_linear_region(surface, LinearRegion { bounds: Rect::new(0, 0, width as i32, height as i32), progress }, to_linear, ctx)
+}
+
+pub(super) fn read_linear_region(surface: &photocraft_raster::Surface, region: LinearRegion, to_linear: &Transform, ctx: &JobCtx) -> Result<Vec<[f32; 4]>> {
+    let (width, height) = region.dimensions()?;
+    let progress = region.progress;
     ctx.check()?;
     let format = surface.format();
     let colors = format.mode.color_channels();
@@ -69,7 +93,7 @@ pub(super) fn read_linear(
     for y in (0..height).step_by(rows) {
         ctx.check()?;
         let end = y.saturating_add(rows as u32).min(height);
-        let data = surface.try_read_region(Rect::new(0, y as i32, width as i32, end as i32)).map_err(failure)?;
+        let data = surface.try_read_region(Rect::new(0, region.bounds.y0 + y as i32, width as i32, region.bounds.y0 + end as i32)).map_err(failure)?;
         let offset = y as usize * width as usize;
         let count = (end - y) as usize * width as usize;
         let destination = input.get_mut(offset..offset + count).ok_or_else(|| failure("invalid 360 conversion band"))?;
@@ -100,8 +124,23 @@ pub(super) fn write_linear(
     preserve_alpha: bool,
     ctx: &JobCtx,
 ) -> Result<()> {
+    if size.width > i32::MAX as u32 || size.height > i32::MAX as u32 {
+        return Err(failure("unsupported spherical canvas dimensions"));
+    }
+    write_linear_region(surface, LinearRegion { bounds: Rect::from_size(size), progress: (0.85, 1.0) }, from_linear, input, pixels, preserve_alpha, ctx)
+}
+
+pub(super) fn write_linear_region(
+    surface: &mut photocraft_raster::Surface,
+    region: LinearRegion,
+    from_linear: &Transform,
+    input: &[[f32; 4]],
+    pixels: &[[f32; 4]],
+    preserve_alpha: bool,
+    ctx: &JobCtx,
+) -> Result<()> {
     ctx.check()?;
-    let (width, height) = (size.width, size.height);
+    let (width, height) = region.dimensions()?;
     let format = surface.format();
     let colors = format.mode.color_channels();
     let channels = format.channels();
@@ -120,13 +159,13 @@ pub(super) fn write_linear(
     for y in (0..height).step_by(rows) {
         ctx.check()?;
         let end = y.saturating_add(rows as u32).min(height);
-        let bounds = Rect::new(0, y as i32, width as i32, end as i32);
+        let bounds = Rect::new(0, region.bounds.y0 + y as i32, width as i32, region.bounds.y0 + end as i32);
         let offset = y as usize * width as usize;
         let count = (end - y) as usize * width as usize;
         let output = pixels.get(offset..offset + count).ok_or_else(|| failure("invalid 360 output band"))?;
         let originals = input.get(offset..offset + count).ok_or_else(|| failure("invalid 360 input band"))?;
         if output == originals {
-            ctx.progress(0.85 + 0.15 * end as f32 / height as f32, "Retaining unchanged layer pixels");
+            ctx.progress(region.progress.0 + (region.progress.1 - region.progress.0) * end as f32 / height as f32, "Retaining unchanged layer pixels");
             continue;
         }
         let mut native = surface.try_read_region(bounds).map_err(failure)?;
@@ -146,7 +185,7 @@ pub(super) fn write_linear(
         }
         ctx.check()?;
         surface.try_write_region(bounds, &native).map_err(failure)?;
-        ctx.progress(0.85 + 0.15 * end as f32 / height as f32, "Saving finished layer pixels");
+        ctx.progress(region.progress.0 + (region.progress.1 - region.progress.0) * end as f32 / height as f32, "Saving finished layer pixels");
     }
     ctx.check()
 }

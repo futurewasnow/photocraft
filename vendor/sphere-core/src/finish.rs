@@ -295,6 +295,176 @@ pub struct Plate<'a> {
     pub horizontal_fov: f64,
 }
 
+/// Validated pole projection reusable across bounded row bands. The full sphere need not
+/// fit in a working allocation; each supplied band and the donor still obey the pixel limit.
+pub struct PreparedPolePatch<'a> {
+    plate: &'a Plate<'a>,
+    patch: PolePatch,
+    width: u32,
+    height: u32,
+    tangent: f64,
+    vertical_tangent: f64,
+    matrix: [[f64; 3]; 3],
+}
+
+impl<'a> PreparedPolePatch<'a> {
+    pub fn new(plate: &'a Plate<'a>, patch: PolePatch, width: u32, height: u32) -> Result<Self> {
+        if height == 0 || u64::from(width) != 2 * u64::from(height) {
+            return Err(Error::Invalid(
+                "pole repair requires a positive 2:1 full-sphere geometry",
+            ));
+        }
+        if pixel_count(plate.width, plate.height)? != plate.pixels.len()
+            || plate.width < 2
+            || plate.height < 2
+        {
+            return Err(Error::Invalid(
+                "patch plate dimensions do not match its buffer or are below 2 pixels",
+            ));
+        }
+        if !plate.horizontal_fov.is_finite()
+            || !(1.0..170.0).contains(&plate.horizontal_fov)
+            || !patch.radius_degrees.is_finite()
+            || !(0.1..=60.0).contains(&patch.radius_degrees)
+            || !patch.feather_degrees.is_finite()
+            || patch.feather_degrees <= 0.0
+            || patch.feather_degrees > patch.radius_degrees
+        {
+            return Err(Error::Invalid(
+                "invalid patch FOV, radius (0.1..60) or feather (0..radius]",
+            ));
+        }
+        let tangent = (plate.horizontal_fov.to_radians() * 0.5).tan();
+        let vertical_tangent = tangent * f64::from(plate.height) / f64::from(plate.width);
+        let usable = (tangent * (1.0 - 1.0 / f64::from(plate.width)))
+            .min(vertical_tangent * (1.0 - 1.0 / f64::from(plate.height)));
+        if patch.radius_degrees.to_radians().tan() >= usable {
+            return Err(Error::Invalid(
+                "clean plate FOV/resolution does not cover the entire patch cap",
+            ));
+        }
+        let pitch = match patch.pole {
+            Pole::Nadir => -90.0,
+            Pole::Zenith => 90.0,
+        };
+        let matrix = Orientation {
+            yaw: patch.yaw,
+            pitch,
+            roll: 0.0,
+        }
+        .validate()?
+        .matrix();
+        validate_pixels(plate.pixels)?;
+        Ok(Self {
+            plate,
+            patch,
+            width,
+            height,
+            tangent,
+            vertical_tangent,
+            matrix,
+        })
+    }
+
+    /// Conservative full-width row range containing every affected pixel, with a guard row
+    /// at the angular boundary. Rows outside this range can be left in their native storage.
+    pub fn affected_rows(&self) -> std::ops::Range<u32> {
+        let rows = ((self.patch.radius_degrees / 180.0 * f64::from(self.height)).ceil() as u32)
+            .saturating_add(1)
+            .min(self.height);
+        match self.patch.pole {
+            Pole::Zenith => 0..rows,
+            Pole::Nadir => self.height - rows..self.height,
+        }
+    }
+
+    /// Repair contiguous complete rows in global sphere coordinates. No source mutation occurs
+    /// on cancellation or error. Callers must stage multiple bands before committing an edit.
+    pub fn apply_band(
+        &self,
+        first_row: u32,
+        input: &[[f32; 4]],
+        control: &(impl Fn(f32) -> bool + Sync),
+    ) -> Result<Vec<[f32; 4]>> {
+        if !control(0.0) {
+            return Err(Error::Cancelled);
+        }
+        if !input.len().is_multiple_of(self.width as usize) {
+            return Err(Error::Invalid(
+                "pole band must contain complete source-width rows",
+            ));
+        }
+        let rows = u32::try_from(input.len() / self.width as usize).map_err(|_| Error::TooLarge)?;
+        if first_row
+            .checked_add(rows)
+            .is_none_or(|end| end > self.height)
+        {
+            return Err(Error::Invalid("pole band extends outside the sphere"));
+        }
+        pixel_count(self.width, rows)?;
+        validate_pixels(input)?;
+        let mut out = pixels(self.width, rows)?;
+        out.par_iter_mut()
+            .enumerate()
+            .try_for_each(|(i, pixel)| -> Result<()> {
+                if i.is_multiple_of(self.width as usize) && !control(i as f32 / input.len() as f32)
+                {
+                    return Err(Error::Cancelled);
+                }
+                let x = (i % self.width as usize) as u32;
+                let y = first_row + (i / self.width as usize) as u32;
+                *pixel = self.blend(input[i], x, y);
+                Ok(())
+            })?;
+        if !control(1.0) {
+            return Err(Error::Cancelled);
+        }
+        Ok(out)
+    }
+
+    fn blend(&self, source: [f32; 4], x: u32, y: u32) -> [f32; 4] {
+        let u = (f64::from(x) + 0.5) / f64::from(self.width);
+        let v = (f64::from(y) + 0.5) / f64::from(self.height);
+        let angle = match self.patch.pole {
+            Pole::Zenith => v * PI,
+            Pole::Nadir => (1.0 - v) * PI,
+        };
+        let radius = self.patch.radius_degrees.to_radians();
+        if angle >= radius {
+            return source;
+        }
+        let d = direction(u, v);
+        let m = &self.matrix;
+        let local: [f64; 3] =
+            std::array::from_fn(|c| m[0][c] * d[0] + m[1][c] * d[1] + m[2][c] * d[2]);
+        let plate = self.plate;
+        let x = ((local[0] / local[2] / self.tangent + 1.0) * 0.5 * f64::from(plate.width) - 0.5)
+            .clamp(0.0, f64::from(plate.width - 1));
+        let y =
+            ((1.0 - local[1] / local[2] / self.vertical_tangent) * 0.5 * f64::from(plate.height)
+                - 0.5)
+                .clamp(0.0, f64::from(plate.height - 1));
+        let (ix, iy) = (x.floor() as usize, y.floor() as usize);
+        let (jx, jy) = (
+            (ix + 1).min(plate.width as usize - 1),
+            (iy + 1).min(plate.height as usize - 1),
+        );
+        let (fx, fy) = ((x - ix as f64) as f32, (y - iy as f64) as f32);
+        let t = ((radius - angle) / self.patch.feather_degrees.to_radians()).clamp(0.0, 1.0);
+        let weight = (t * t * (3.0 - 2.0 * t)) as f32;
+        let donor: [f32; 4] = std::array::from_fn(|c| {
+            ((plate.pixels[iy * plate.width as usize + ix][c] * (1.0 - fx)
+                + plate.pixels[iy * plate.width as usize + jx][c] * fx)
+                * (1.0 - fy)
+                + (plate.pixels[jy * plate.width as usize + ix][c] * (1.0 - fx)
+                    + plate.pixels[jy * plate.width as usize + jx][c] * fx)
+                    * fy)
+                * weight
+        });
+        std::array::from_fn(|c| donor[c] + source[c] * (1.0 - donor[3]))
+    }
+}
+
 /// Composite a supplied rectilinear clean plate into a pole cap in premultiplied linear light.
 /// No invented scene content: the caller supplies and aligns the clean plate. Unmodified pixels
 /// are bit-identical. Transparent donors use source-over rather than punching new holes.
@@ -316,103 +486,11 @@ pub fn patch_pole_with_control(
     if !control(0.0) {
         return Err(Error::Cancelled);
     }
-    if pixel_count(plate.width, plate.height)? != plate.pixels.len()
-        || plate.width < 2
-        || plate.height < 2
-    {
-        return Err(Error::Invalid(
-            "patch plate dimensions do not match its buffer or are below 2 pixels",
-        ));
-    }
-    if !plate.horizontal_fov.is_finite()
-        || !(1.0..170.0).contains(&plate.horizontal_fov)
-        || !patch.radius_degrees.is_finite()
-        || !(0.1..=60.0).contains(&patch.radius_degrees)
-        || !patch.feather_degrees.is_finite()
-        || patch.feather_degrees <= 0.0
-        || patch.feather_degrees > patch.radius_degrees
-    {
-        return Err(Error::Invalid(
-            "invalid patch FOV, radius (0.1..60) or feather (0..radius]",
-        ));
-    }
-    let tangent = (plate.horizontal_fov.to_radians() * 0.5).tan();
-    let vertical_tangent = tangent * f64::from(plate.height) / f64::from(plate.width);
-    // Require bilinear sample centres, not merely geometric FOV, to cover the whole cap.
-    let usable = (tangent * (1.0 - 1.0 / f64::from(plate.width)))
-        .min(vertical_tangent * (1.0 - 1.0 / f64::from(plate.height)));
-    if patch.radius_degrees.to_radians().tan() >= usable {
-        return Err(Error::Invalid(
-            "clean plate FOV/resolution does not cover the entire patch cap",
-        ));
-    }
-    let pitch = match patch.pole {
-        Pole::Nadir => -90.0,
-        Pole::Zenith => 90.0,
-    };
-    let m = Orientation {
-        yaw: patch.yaw,
-        pitch,
-        roll: 0.0,
-    }
-    .validate()?
-    .matrix();
-    validate_pixels(source.data)?;
-    validate_pixels(plate.pixels)?;
-    let mut out = pixels(source.width, source.height)?;
-    let radius = patch.radius_degrees.to_radians();
-    let feather = patch.feather_degrees.to_radians();
-    out.par_iter_mut()
-        .enumerate()
-        .try_for_each(|(i, p)| -> Result<()> {
-            if i.is_multiple_of(source.width as usize)
-                && !control(i as f32 / source.data.len() as f32)
-            {
-                return Err(Error::Cancelled);
-            }
-            *p = source.data[i];
-            let u = ((i % source.width as usize) as f64 + 0.5) / f64::from(source.width);
-            let v = ((i / source.width as usize) as f64 + 0.5) / f64::from(source.height);
-            let angle = match patch.pole {
-                Pole::Zenith => v * PI,
-                Pole::Nadir => (1.0 - v) * PI,
-            };
-            if angle >= radius {
-                return Ok(());
-            }
-            let d = direction(u, v);
-            let local: [f64; 3] =
-                std::array::from_fn(|c| m[0][c] * d[0] + m[1][c] * d[1] + m[2][c] * d[2]);
-            let x = ((local[0] / local[2] / tangent + 1.0) * 0.5 * f64::from(plate.width) - 0.5)
-                .clamp(0.0, f64::from(plate.width - 1));
-            let y =
-                ((1.0 - local[1] / local[2] / vertical_tangent) * 0.5 * f64::from(plate.height)
-                    - 0.5)
-                    .clamp(0.0, f64::from(plate.height - 1));
-            let (ix, iy) = (x.floor() as usize, y.floor() as usize);
-            let (jx, jy) = (
-                (ix + 1).min(plate.width as usize - 1),
-                (iy + 1).min(plate.height as usize - 1),
-            );
-            let (fx, fy) = ((x - ix as f64) as f32, (y - iy as f64) as f32);
-            let t = ((radius - angle) / feather).clamp(0.0, 1.0);
-            let weight = (t * t * (3.0 - 2.0 * t)) as f32;
-            let donor: [f32; 4] = std::array::from_fn(|c| {
-                ((plate.pixels[iy * plate.width as usize + ix][c] * (1.0 - fx)
-                    + plate.pixels[iy * plate.width as usize + jx][c] * fx)
-                    * (1.0 - fy)
-                    + (plate.pixels[jy * plate.width as usize + ix][c] * (1.0 - fx)
-                        + plate.pixels[jy * plate.width as usize + jx][c] * fx)
-                        * fy)
-                    * weight
-            });
-            *p = std::array::from_fn(|c| donor[c] + source.data[i][c] * (1.0 - donor[3]));
-            Ok(())
-        })?;
-    if !control(1.0) {
-        return Err(Error::Cancelled);
-    }
-    Ok(out)
+    PreparedPolePatch::new(plate, patch, source.width, source.height)?.apply_band(
+        0,
+        source.data,
+        control,
+    )
 }
 
 #[derive(Debug, Default, Serialize)]

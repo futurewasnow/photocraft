@@ -209,6 +209,31 @@ reference and at most 8 MiB for the banded command, excluding document tiles,
 history and allocator overhead. Timings must be measured, not inferred from this
 memory reduction.
 
+### Bounded pole repair, 2026-10-28
+
+The pole command now converts and blends only the affected latitude rows in
+bands. Two RGBA32F target bands use at most 16 MiB, plus the existing at-most
+8 MiB native-channel scratch, full donor image, document tiles and history.
+The 128 Mi-pixel canvas guard remains; this is not unrestricted-size import.
+The command still stages one atomic document edit. Eight integration tests pass,
+including both poles across multiple bands, full-frame pixel parity, exact undo
+and a late invalid pixel that must discard earlier staged writes. Four unit
+tests cover depth, colour profiles, alpha, no-op and cancellation.
+
+The vendored band kernel is pinned by its 17 hashes to Sphere360 suite revision
+`d5be43e76db0a6592daa8cc2b3c0d20c7b1738da`; the separate, newer temporal video
+module is not part of this editor snapshot. Full wasm and layering checks pass.
+Native all-target algo/engine lint passes after fixing one test-only fixed-chunk
+iterator warning. The 8192 x 4096 RGBA16 benchmark completed in 2.5512604 seconds
+on two threads and processed only 457 pole rows. The complete native output hash
+matches the earlier full-frame implementation exactly, and undo restores every
+original byte. Target linear working storage falls from 1 GiB to 16 MiB, excluding
+donor storage, document/history tiles, native scratch and allocator overhead.
+The earlier 36.39-second timing ran under a different competing workload, so it
+does not establish a controlled speedup ratio. The full command panic-hunt was
+rerun and still fails on `file.printers` and `file.printOneCopy` taking over four
+seconds twice; it is not a passing release gate.
+
 Measured on 2026-10-26 on the i7-6820HK, with other builds/tests stopped, all three
 33.6 MP RGBA16 runs matched the reference's native-byte hash. Median command time
 was 0.8947 seconds for the banded command versus 0.9378 seconds for the full-buffer
@@ -218,7 +243,7 @@ this is not a measurement of total process memory. The small timing difference
 from three runs on one workstation is not a general speed guarantee.
 
 
-## Pole workspace interaction check — 2026-10-28
+## Pole workspace interaction check â€” 2026-10-28
 
 Six focused native UI tests and all-target native lint pass with the patched TLS
 lockfile; menu parity remains 631/631. Seven pole/finishing engine integration

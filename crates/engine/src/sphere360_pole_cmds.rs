@@ -1,9 +1,9 @@
 //! Pole-cap repairs from another open document's active raster pixels.
-use crate::sphere360_finish_cmds::{failure, read_linear, sphere_error, write_linear};
+use crate::sphere360_finish_cmds::{LinearRegion, failure, read_linear, read_linear_region, sphere_error, write_linear_region};
 use crate::{EngineError, Result, Session, commands::CommandSpec};
 use photocraft_algo::sphere360::{
     self as sphere,
-    finish::{Plate, PolePatch},
+    finish::{Plate, PolePatch, PreparedPolePatch},
 };
 use photocraft_cms::{Builtin, Intent, Transform};
 use photocraft_color::ColorMode;
@@ -96,18 +96,31 @@ fn patch_pole(s: &mut Session, value: &Value) -> Result<Value> {
             let source = donor.layer(donor_id).ok_or(EngineError::NoLayer(donor_id))?.surface().ok_or_else(|| failure("repair raster missing"))?;
             let plate_pixels = read_linear(source, width, height, &donor_to_linear, ctx, (0.0, 0.15))?;
             let surface = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?.surface_mut().ok_or_else(|| failure("target raster missing"))?;
-            let input = read_linear(surface, target_width, target_height, &target_to_linear, ctx, (0.15, 0.3))?;
-            let panorama = sphere::Panorama::new(target_width, target_height, &input).map_err(sphere_error)?;
             let plate = Plate { width, height, pixels: &plate_pixels, horizontal_fov: params.horizontal_fov };
-            let pixels = sphere::finish::patch_pole_with_control(&panorama, &plate, patch, &|p| {
-                ctx.progress(0.3 + p * 0.55, "Blending the pole repair");
-                !ctx.cancelled()
-            })
-            .map_err(sphere_error)?;
-            write_linear(surface, photocraft_geom::Size::new(target_width, target_height), &target_from_linear, &input, &pixels, false, ctx)?;
+            let prepared = PreparedPolePatch::new(&plate, patch, target_width, target_height).map_err(sphere_error)?;
+            let cap = prepared.affected_rows();
+            // Two RGBA32F working bands total at most 16 MiB. Native samples are
+            // separately capped at 8 MiB; document tiles/history and donor add storage.
+            let rows = (524_288 / target_width as usize).clamp(1, 128) as u32;
+            for first in (cap.start..cap.end).step_by(rows as usize) {
+                ctx.check()?;
+                let end = first.saturating_add(rows).min(cap.end);
+                let from = 0.15 + 0.85 * (first - cap.start) as f32 / cap.len() as f32;
+                let to = 0.15 + 0.85 * (end - cap.start) as f32 / cap.len() as f32;
+                let phase = to - from;
+                let bounds = photocraft_geom::Rect::new(0, first as i32, target_width as i32, end as i32);
+                let input = read_linear_region(surface, LinearRegion { bounds, progress: (from, from + phase * 0.3) }, &target_to_linear, ctx)?;
+                let pixels = prepared
+                    .apply_band(first, &input, &|p| {
+                        ctx.progress(from + phase * (0.3 + p * 0.4), "Blending the pole repair");
+                        !ctx.cancelled()
+                    })
+                    .map_err(sphere_error)?;
+                write_linear_region(surface, LinearRegion { bounds, progress: (from + phase * 0.7, to) }, &target_from_linear, &input, &pixels, false, ctx)?;
+            }
             Ok(json!({"layer":id.0,"scope":"active raster layer pixels","donor_document":donor.id.0,
             "donor_layer":donor_id.0,"width":target_width,"height":target_height,"patch":patch,
-            "horizontal_fov":params.horizontal_fov,"method":"supplied rectilinear clean plate; spherical linear-light source-over"}))
+            "horizontal_fov":params.horizontal_fov,"processed_rows":cap.end-cap.start,"linear_band_storage_bytes":u64::from(target_width)*u64::from(rows.min(cap.end-cap.start))*32,"method":"supplied rectilinear clean plate; spherical linear-light source-over"}))
         },
         |v| v,
     )

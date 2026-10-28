@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "{}",
         serde_json::to_string_pretty(
-            &json!({"command":if pole {"sphere360.patchPole"} else {"sphere360.denoise"},"width":width,"height":height,"depth":16,"seconds":seconds,"report":report,"undo_bit_exact":true,"source_blake3":source_hash.finalize().to_hex().to_string(),"output_blake3":output_hash.finalize().to_hex().to_string(),"linear_frame_storage_bytes":u64::from(width)*u64::from(height)*32,"latitude_tap_storage_bytes":if pole {0} else {u64::from(height)*576},"donor_linear_bytes":if pole {512*512*16} else {0},"native_band_limit_bytes":8*1024*1024,"note":"single-host synthetic measurement, no baseline or quality approval"})
+            &json!({"command":if pole {"sphere360.patchPole"} else {"sphere360.denoise"},"width":width,"height":height,"depth":16,"seconds":seconds,"report":report,"undo_bit_exact":true,"source_blake3":source_hash.finalize().to_hex().to_string(),"output_blake3":output_hash.finalize().to_hex().to_string(),"linear_frame_storage_bytes":if pole {0} else {u64::from(width)*u64::from(height)*32},"linear_band_storage_bytes":if pole {report["linear_band_storage_bytes"].as_u64().unwrap_or(0)} else {0},"latitude_tap_storage_bytes":if pole {0} else {u64::from(height)*576},"donor_linear_bytes":if pole {512*512*16} else {0},"native_band_limit_bytes":8*1024*1024,"note":"single-host synthetic measurement, no baseline or quality approval"})
         )?
     );
     Ok(())

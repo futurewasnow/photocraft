@@ -37,6 +37,56 @@ fn fixture(depth: SampleType) -> (Session, u64) {
 }
 
 #[test]
+fn multi_band_caps_match_full_frame_and_late_failure_is_atomic() {
+    use photocraft_algo::sphere360::{
+        Panorama,
+        finish::{Plate, Pole, PolePatch, patch_pole},
+    };
+    for pole in [Pole::Nadir, Pole::Zenith] {
+        let mut s = Session::new();
+        let mut target = document("sphere", 1024, 512, SampleType::F32, ColorMode::Rgb, &[0.2, -0.1, 1.7, 1.0]);
+        target.icc_profile = Some(Builtin::LinearSrgb.profile().to_bytes());
+        let mut donor = document("plate", 64, 64, SampleType::F32, ColorMode::Rgb, &[0.8, 0.2, 0.3, 0.75]);
+        donor.icc_profile = target.icc_profile.clone();
+        s.add_document(target, None);
+        s.add_document(donor, None);
+        let donor_id = s.active().unwrap().doc.id.0;
+        s.set_active(0);
+        let original = bytes(&s, 0);
+        let params = json!({"donor_document":donor_id,"horizontal_fov":150,"patch":{"pole":pole,"radius_degrees":60,"feather_degrees":15,"yaw":37}});
+        let report = s.execute("sphere360.patchPole", params.clone()).unwrap();
+        assert!(report["processed_rows"].as_u64().unwrap() > 128);
+        assert!(report["linear_band_storage_bytes"].as_u64().unwrap() <= 16 * 1024 * 1024);
+        let source = vec![[0.2, -0.1, 1.7, 1.0]; 1024 * 512];
+        let plate_pixels = vec![[0.8 * 0.75, 0.2 * 0.75, 0.3 * 0.75, 0.75]; 64 * 64];
+        let expected = patch_pole(
+            &Panorama::new(1024, 512, &source).unwrap(),
+            &Plate { width: 64, height: 64, pixels: &plate_pixels, horizontal_fov: 150.0 },
+            PolePatch { pole, radius_degrees: 60.0, feather_degrees: 15.0, yaw: 37.0 },
+        )
+        .unwrap();
+        let state = s.active().unwrap();
+        let actual = state.doc.layer(state.active_layer.unwrap()).unwrap().surface().unwrap().read_region(state.doc.bounds());
+        for (a, b) in actual.as_chunks::<4>().0.iter().zip(&expected) {
+            for c in 0..4 {
+                assert!((a[c] - b[c]).abs() < 2e-6);
+            }
+        }
+        s.execute("edit.undo", json!({})).unwrap();
+        assert_eq!(bytes(&s, 0), original);
+        s.edit("invalid later band", |doc, active| {
+            let y = if pole == Pole::Zenith { 170 } else { 511 };
+            doc.layer_mut(active.unwrap()).unwrap().surface_mut().unwrap().write_pixel(0, y, &[f32::NAN, 0.0, 0.0, 1.0]);
+            Ok(())
+        })
+        .unwrap();
+        let before = s.active().unwrap().doc.clone();
+        assert!(s.execute("sphere360.patchPole", params).is_err());
+        assert!(Arc::ptr_eq(&before, &s.active().unwrap().doc), "a later band failure must discard earlier staged edits");
+    }
+}
+
+#[test]
 fn both_poles_fill_holes_at_all_depths_and_restore_exactly() {
     for depth in SampleType::ALL {
         for pole in ["nadir", "zenith"] {

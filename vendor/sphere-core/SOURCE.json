@@ -11,13 +11,14 @@
     "src/factory/overlap.rs": "050e901deb7819d01a62525b31d216afa4d78259374ae70cbff2e5f2883ca614",
     "src/factory/warp.rs": "d15c1a38de63e36ae7ab21ec170ffbedb6890065932f68f63b412671ea1c200e",
     "src/factory/warp/tests.rs": "626a45ecd4705fd4ee8092f35c5275f9291c9b6b2c725aede79b2b7c7dd2bef0",
-    "src/finish.rs": "3ca97785a5206aa2872741e5647d78da6d9dd87aad90a01aa9d59479ee52194c",
+    "src/finish.rs": "7a8884fc9df0aeb9320b1989347a0a8769bb8065121499aeec761428006250b5",
     "src/lib.rs": "477970311af31ded8ea73904d41f9d1efd42b9ce5e65f62eeda243dfe01fc618",
     "src/metadata.rs": "cd149478ce8800912c540d7b6d1f6ec399db9522f62fa948c347a927d71051f5",
     "src/parallel.rs": "836aeda84210a17adc18ad63f942c375c9c7991b3287c49c3be3d4c9facea037",
     "src/rotation.rs": "740b32881ce9522c358778057baa05830cddc61354e3568e2d1c1e76dbee3cd7",
     "src/stitch.rs": "c6c0bdb8aac1d766a5f81e5b92d7b1af4b7ea5d42ab3f92e84c87472e16773b3",
     "tests/finish.rs": "eb548e503a655dfb77ff54d28d79aa6f126773a59b7ea88dfb2e1f221966ad4b",
+    "tests/pole_bands.rs": "c7a541278772f13bfef90c7e8b9b4991a9644361af55887a3764be2b6e558410",
     "tests/sphere.rs": "fcff0ecc57dabbbcab28f48715dd218199c407dcaa9c586804907d7858c9fdc8",
     "THIRD_PARTY_NOTICES.md": "17bb70648c2ed8055b40b8398762a0db99e6ca4602458681de2e6d9310a4e165"
   }
