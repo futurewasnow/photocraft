@@ -300,9 +300,14 @@ pub fn windows(app: &mut PhotocraftApp, ctx: &egui::Context) {
     let mut denoise = false;
     let mut patch = false;
     let mut state = app.ui.sphere360.clone();
-    egui::Window::new(tl!("360° Workspace")).id(egui::Id::new("sphere360-workspace")).open(&mut open).default_width(580.).resizable(true).vscroll(true).show(
-        ctx,
-        |ui| {
+    egui::Window::new(tl!("360° Workspace"))
+        .id(egui::Id::new("sphere360-workspace"))
+        .open(&mut open)
+        .default_width(580.)
+        .default_height(900.)
+        .resizable(true)
+        .vscroll(true)
+        .show(ctx, |ui| {
             ui.label(tl!("Monoscopic 360 × 180° · equirectangular"));
             if !valid {
                 ui.weak(tl!("Open a full-sphere 2:1 panorama to inspect it here."));
@@ -433,8 +438,7 @@ pub fn windows(app: &mut PhotocraftApp, ctx: &egui::Context) {
                 }
                 ui.weak(tl!("FOV must match the source projection. Colour-managed blend, one undo step. No automatic object removal or video tracking."));
             });
-        },
-    );
+        });
     state.open = open;
     app.ui.sphere360 = state;
     if patch {

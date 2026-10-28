@@ -24,6 +24,8 @@
 //! `--click-at X,Y` opens a screen-space menu (for example the top Select menu) after the script.
 //! `--settle-before-click-ms N` renders for N ms after the script before clicking, allowing
 //! asynchronous previews to finish laying out. `--settle-ms` still waits after the click.
+//! `--scroll-at X,Y --scroll-y N` sends a vertical wheel event after the script and before
+//! settling/clicking. Negative N scrolls down; coordinates and distance are screen points.
 
 use photocraft_ui_egui::control::{ControlRequest, Outcome, handle};
 use photocraft_ui_egui::{PhotocraftApp, Services};
@@ -159,6 +161,19 @@ fn main() {
         if timing {
             eprintln!("{:>8.1} ms  {label}", t0.elapsed().as_secs_f64() * 1000.0);
         }
+    }
+    if let Some((x, y)) = arg(&args, "--scroll-at").and_then(|s| s.split_once(',').and_then(|(x, y)| Some((x.parse::<f32>().ok()?, y.parse::<f32>().ok()?)))) {
+        let delta: f32 = arg(&args, "--scroll-y").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+        assert!(x.is_finite() && y.is_finite() && delta.is_finite(), "scroll coordinates and distance must be finite");
+        harness.event(egui::Event::PointerMoved(egui::pos2(x, y)));
+        harness.step();
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, delta),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(4);
     }
     let pre_click_ms: u64 = arg(&args, "--settle-before-click-ms").and_then(|s| s.parse().ok()).unwrap_or(0);
     let pre_click_start = std::time::Instant::now();

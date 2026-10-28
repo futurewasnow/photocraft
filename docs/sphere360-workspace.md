@@ -216,3 +216,26 @@ reference. Individual pairs (reference → banded seconds) were 0.9144 → 0.884
 0.9378 → 0.8947 and 0.9694 → 0.9111. The temporary sample buffer is 64 times smaller;
 this is not a measurement of total process memory. The small timing difference
 from three runs on one workstation is not a general speed guarantee.
+
+
+## Pole workspace interaction check � 2026-10-28
+
+Six focused native UI tests and all-target native lint pass with the patched TLS
+lockfile; menu parity remains 631/631. Seven pole/finishing engine integration
+tests pass. The full command stress test still fails in `file.printers` and
+`file.printOneCopy` with the Windows printer-service timeouts described above.
+
+A fresh 1440 x 1100 offscreen interaction check created a transparent 1024 x 512
+RGBA16 panorama and a separate 256 x 256 procedural blue donor. Pointer clicks
+opened Nadir / zenith repair, selected that donor, scrolled the controls and
+pressed Apply pole repair with background jobs enabled. The final capture shows
+the blue feathered nadir, unchanged canvas dimensions and one 360 Pole Repair
+history entry. It used the Microsoft Basic Render Driver/DX12; this is control
+acceptance, not a real-scene stitch, GPU performance or headset test.
+
+The workspace now opens taller so the main editing controls are immediately
+visible. Smaller displays retain scrolling. The snapshot harness accepts
+`--scroll-at X,Y --scroll-y N` to verify controls below the fold before a settled
+pointer click. Native build/lint and the UI wasm check pass; wasm retains six
+existing dead-code warnings. The canonical suite's new bounded pole API is not
+yet vendored into this editor, whose pole command still converts full frames.
